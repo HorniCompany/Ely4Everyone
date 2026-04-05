@@ -28,7 +28,7 @@ object TokenHealthMonitor {
         NOT_AUTHENTICATED,
     }
 
-    private val EXPIRING_SOON_THRESHOLD = Duration.ofHours(3)
+    private val EXPIRING_SOON_THRESHOLD = Duration.ofHours(12)
     private val AUTO_REFRESH_COOLDOWN = Duration.ofMinutes(15)
     private val CHECK_INTERVAL_TICKS = 20 * 30 // Check every 30 seconds
 
@@ -67,16 +67,12 @@ object TokenHealthMonitor {
      * Returns tooltip text for the title screen icon button.
      */
     fun tooltipText(): String {
+        val remaining = remainingTimeText()
+        val suffix = if (remaining != null) " ($remaining)" else ""
         return when (health) {
-            TokenHealth.HEALTHY -> {
-                val remaining = remainingTimeText()
-                "✅ Сессия активна" + if (remaining != null) " ($remaining)" else ""
-            }
-            TokenHealth.EXPIRING_SOON -> {
-                val remaining = remainingTimeText()
-                "⚠ Сессия скоро истечёт" + if (remaining != null) " ($remaining)" else ""
-            }
-            TokenHealth.EXPIRED -> "❌ Сессия истекла — войдите заново"
+            TokenHealth.HEALTHY -> "✅ Сессия активна$suffix"
+            TokenHealth.EXPIRING_SOON -> "⚠ Сессия скоро истечёт$suffix"
+            TokenHealth.EXPIRED -> "❌ Сессия истекла — войдите заново$suffix"
             TokenHealth.NOT_AUTHENTICATED -> "Войти через Ely.by"
         }
     }
