@@ -3,7 +3,6 @@ package dev.ely4everyone.mod
 import dev.ely4everyone.mod.auth.AuthWorkflowManager
 import dev.ely4everyone.mod.config.ModConfigStore
 import dev.ely4everyone.mod.identity.MinecraftClientSessionBridge
-import dev.ely4everyone.mod.network.LoginQueryResponder
 import dev.ely4everyone.mod.session.ClientSessionStore
 import dev.ely4everyone.mod.session.TokenHealthMonitor
 import dev.ely4everyone.mod.ui.TitleScreenIntegration
@@ -23,8 +22,8 @@ class Ely4EveryoneClientMod : ClientModInitializer {
         val config = ModConfigStore.load()
         val sessionState = ClientSessionStore.load()
         MinecraftClientSessionBridge.refreshActiveIdentity()
-        LoginQueryResponder.register()
         TitleScreenIntegration.register()
+        dev.ely4everyone.mod.network.LoginQueryResponder.register()
         ClientTickEvents.END_CLIENT_TICK.register(AuthWorkflowManager::tick)
         ClientTickEvents.END_CLIENT_TICK.register(TokenHealthMonitor::tick)
 

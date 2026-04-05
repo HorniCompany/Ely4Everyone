@@ -3,10 +3,12 @@ package dev.ely4everyone.mod.network
 import dev.ely4everyone.mod.Ely4EveryoneClientMod
 import dev.ely4everyone.mod.auth.AuthHostClient
 import dev.ely4everyone.mod.auth.AuthPollResult
-import dev.ely4everyone.mod.config.ModConfigStore
 import dev.ely4everyone.mod.session.ClientSessionState
 import dev.ely4everyone.mod.session.ClientSessionStore
+import dev.ely4everyone.shared.protocol.AuthProtocolCodec
+import dev.ely4everyone.shared.protocol.LoginResponse
 import net.fabricmc.fabric.api.client.networking.v1.ClientLoginNetworking
+import net.fabricmc.fabric.api.networking.v1.PacketByteBufs
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.network.ClientLoginNetworkHandler
 import net.minecraft.network.PacketByteBuf
@@ -29,7 +31,9 @@ object LoginQueryResponder {
         buf: PacketByteBuf,
         callbacksConsumer: Consumer<ChannelFutureListener>,
     ): CompletableFuture<PacketByteBuf?> {
-        val challenge = LoginQueryCodec.decodeChallenge(buf)
+        val payload = ByteArray(buf.readableBytes())
+        buf.readBytes(payload)
+        val challenge = AuthProtocolCodec.decodeChallenge(payload)
         val sessionState = ClientSessionStore.load()
 
         logger.info(
@@ -69,34 +73,34 @@ object LoginQueryResponder {
 
             if (issuedTicket.ticket.isNullOrBlank()) {
                 logger.info("Auth host did not issue login ticket: {}", issuedTicket.error ?: "unknown error")
-                null
+                emptyResponse()
             } else {
                 logger.info("Issued challenge-bound Ely login ticket for nonce {}.", nonce)
-                LoginQueryCodec.encodeResponse(issuedTicket.ticket)
+                val responsePayload = AuthProtocolCodec.encodeResponse(LoginResponse(ticket = issuedTicket.ticket))
+                PacketByteBufs.create().apply {
+                    writeBytes(responsePayload)
+                }
             }
         }
     }
 
+    private fun emptyResponse(): PacketByteBuf? {
+        // According to Fabric API, returning null signals that the client doesn't understand the channel.
+        // We reply with an empty packet to explicitly say we understood but failed to provide a ticket.
+        val responsePayload = AuthProtocolCodec.encodeResponse(LoginResponse(ticket = null))
+        return PacketByteBufs.create().apply {
+            writeBytes(responsePayload)
+        }
+    }
+
     private fun ensureUsableSession(sessionState: ClientSessionState): ClientSessionState? {
-        val configuredRelayBaseUrl = ModConfigStore.load().resolvedAuthServerBaseUrl().trimEnd('/')
-        val alignedSession = if (sessionState.relayBaseUrl.trimEnd('/') != configuredRelayBaseUrl) {
-            logger.info(
-                "Stored Ely session relay_base_url={} does not match current auth-host={}. Re-aligning to current host.",
-                sessionState.relayBaseUrl,
-                configuredRelayBaseUrl,
-            )
-            sessionState.copy(relayBaseUrl = configuredRelayBaseUrl)
-        } else {
-            sessionState
+        if (sessionState.hasUsableAuthSession()) {
+            return sessionState
         }
 
-        if (alignedSession.hasUsableAuthSession()) {
-            return alignedSession
-        }
-
-        logger.info("Local Ely auth session is empty or expired. Trying to pull latest session from auth host {}.", configuredRelayBaseUrl)
+        logger.info("Local Ely auth session is empty or expired. Trying to pull latest session from auth host.")
         val latestSession: AuthPollResult = runCatching {
-            AuthHostClient.latestSession(configuredRelayBaseUrl)
+            AuthHostClient.latestSession(sessionState.relayBaseUrl)
         }.getOrElse { exception ->
             logger.warn("Failed to pull latest Ely auth session from auth host.", exception)
             return null
@@ -104,7 +108,6 @@ object LoginQueryResponder {
 
         if (latestSession.status != "completed" ||
             latestSession.authSessionToken.isNullOrBlank() ||
-            latestSession.elyAccessToken.isNullOrBlank() ||
             latestSession.username.isNullOrBlank() ||
             latestSession.uuid.isNullOrBlank() ||
             latestSession.expiresAtEpochSeconds == null
@@ -114,14 +117,11 @@ object LoginQueryResponder {
         }
 
         val resolvedSession = ClientSessionState(
-            relayBaseUrl = configuredRelayBaseUrl,
+            relayBaseUrl = sessionState.relayBaseUrl,
             authSessionToken = latestSession.authSessionToken,
-            elyAccessToken = latestSession.elyAccessToken,
             authSessionExpiresAt = Instant.ofEpochSecond(latestSession.expiresAtEpochSeconds),
             elyUsername = latestSession.username,
             elyUuid = latestSession.uuid,
-            elyTexturesValue = latestSession.texturesValue,
-            elyTexturesSignature = latestSession.texturesSignature,
         )
         ClientSessionStore.save(resolvedSession)
         logger.info("Pulled latest Ely auth session for {} ({}) from auth host.", latestSession.username, latestSession.uuid)

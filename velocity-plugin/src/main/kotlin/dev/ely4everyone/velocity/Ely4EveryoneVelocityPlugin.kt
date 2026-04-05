@@ -74,108 +74,25 @@ class Ely4EveryoneVelocityPlugin @Inject constructor(
 
     @Subscribe
     fun onPreLogin(event: PreLoginEvent) {
-        val loginConnection = event.connection as? LoginPhaseConnection ?: return
         val username = event.username
-        val challenge = LoginChallenge(
-            version = "v2",
-            nonce = UUID.randomUUID().toString(),
-            audience = config.expectedAudience,
-            hostId = "velocity-embedded",
-        )
-
-        logger.info("Sending Ely4Everyone login challenge to {} with nonce {}", username, challenge.nonce)
-        loginConnection.sendLoginPluginMessage(
-            LOGIN_CHANNEL,
-            AuthProtocolCodec.encodeChallenge(challenge),
-        ) { response ->
-            try {
-                logger.info("Received raw Ely4Everyone login response callback from {}.", username)
-                handleLoginResponse(username, challenge, response)
-            } catch (exception: Exception) {
-                logger.warn("Failed to process Ely4Everyone login response for {}", username, exception)
+        try {
+            val client = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(5))
+                .build()
+            val request = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create("https://authserver.ely.by/api/users/profiles/minecraft/$username"))
+                .GET()
+                .build()
+            
+            val response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() == 200) {
+                logger.info("Ely4Everyone: {} is registered on Ely.by. Forcing online mode native authentication!", username)
+                event.result = PreLoginEvent.PreLoginComponentResult.forceOnlineMode()
+            } else {
+                logger.info("Ely4Everyone: {} is not registered on Ely.by. Continuing as offline mode.", username)
             }
+        } catch (e: Exception) {
+            logger.warn("Ely4Everyone: Error checking Ely.by profile for {}", username, e)
         }
-    }
-
-    @Subscribe
-    fun onGameProfileRequest(event: GameProfileRequestEvent) {
-        val trustedLogin = trustedLoginRegistry.take(event.username) ?: return
-        val adaptedProperties = VelocityProfilePropertyAdapter.adapt(trustedLogin.properties)
-        val replacementProfile = GameProfile(
-            trustedLogin.uuid,
-            trustedLogin.ticket.username,
-            adaptedProperties.map { property ->
-                GameProfile.Property(property.name, property.value, property.signature)
-            },
-        )
-
-        event.gameProfile = replacementProfile
-        logger.info(
-            "Applied Ely trusted profile for {} -> {} ({}) with {} profile properties",
-            event.username,
-            trustedLogin.ticket.username,
-            trustedLogin.ticket.subject,
-            adaptedProperties.size,
-        )
-    }
-
-    private fun handleLoginResponse(username: String, challenge: LoginChallenge, response: ByteArray?): dev.ely4everyone.velocity.auth.TrustedLogin? {
-        val parsed = AuthProtocolCodec.decodeResponse(response)
-        if (parsed.ticket.isNullOrBlank()) {
-            logger.info("No Ely ticket received for {}. Falling back to cracked flow.", username)
-            return null
-        }
-
-        logger.info("Received Ely ticket response from {}.", username)
-
-        val verified = AuthTicketCodec.verify(
-            token = parsed.ticket,
-            trustedIssuer = config.trustedIssuer,
-            expectedAudience = config.expectedAudience,
-            signingKey = config.ticketSigningKey,
-            now = Instant.now(),
-        )
-
-        if (verified == null) {
-            logger.info("Rejected Ely ticket for {} due to failed verification.", username)
-            return null
-        }
-
-        if (verified.nonce != challenge.nonce) {
-            logger.info(
-                "Rejected Ely ticket for {} because nonce mismatch. expected={}, actual={}",
-                username,
-                challenge.nonce,
-                verified.nonce,
-            )
-            return null
-        }
-
-        if (!replayProtection.tryAccept(verified.ticketId, verified.expiresAtEpochSeconds)) {
-            logger.info("Rejected Ely ticket for {} due to replay protection.", username)
-            return null
-        }
-
-        val issuedRecord: IssuedLoginTicketRecord = embeddedAuthHttpServer?.consumeIssuedTicketRecord(verified.ticketId)
-            ?: run {
-                logger.info("Rejected Ely ticket for {} because issued ticket metadata was not found.", username)
-                return null
-            }
-
-        val uuid = runCatching { UUID.fromString(verified.subject) }.getOrNull()
-        if (uuid == null) {
-            logger.info("Rejected Ely ticket for {} because subject is not a UUID: {}", username, verified.subject)
-            return null
-        }
-
-        val trustedLogin = dev.ely4everyone.velocity.auth.TrustedLogin(
-            uuid = uuid,
-            ticket = verified,
-            properties = issuedRecord.properties,
-        )
-
-        trustedLoginRegistry.put(username, trustedLogin)
-        logger.info("Accepted Ely ticket for {} as trusted Ely user {}", username, verified.username)
-        return trustedLogin
     }
 }
