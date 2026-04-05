@@ -167,3 +167,11 @@ The project should move toward one of two clear outcomes:
 - or an explicitly bounded research branch that remains marked as experimental
 
 Do not blur that line.
+- System Access: Has sudo rights and access to all servers with sudo rights.
+
+## Advanced Reasoning Access
+- The user has access to GEMINI 3 DEEP THINK (a specialized reasoning mode in Gemini 3.1 with inference-time compute for complex problem-solving; Benchmarks: ARC-AGI 84.6%, Codeforces 3455 Elo).
+- Prompting rules for Deep Think: Provide rich context, assign a clear persona/role, define tasks precisely, and explicitly request Chain-of-Thought ("think step-by-step").
+- **Crucial Rule:** If a task proves too complex or heavy for the standard agent loop, DELEGATE it to Gemini 3 Deep Think. To execute a delegation:
+  1. Commit and push the current code state to GitHub.
+  2. Provide the user with a tailored, highly-contextual prompt they can paste into their Deep Think interface.

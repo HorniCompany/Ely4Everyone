@@ -65,6 +65,18 @@ class ClientAuthSessionStore(
         return sessions.values.maxByOrNull { it.createdAtEpochSeconds }
     }
 
+    /**
+     * Find active session by username (case-insensitive).
+     * Used by FastLogin hook to determine if a player has an active Ely.by session
+     * (i.e., they connected with the Ely4Everyone mod and successfully authorized).
+     */
+    fun findByUsername(username: String, now: Instant = Instant.now()): ClientAuthSession? {
+        purgeExpired(now)
+        return sessions.values
+            .filter { it.username.equals(username, ignoreCase = true) }
+            .maxByOrNull { it.createdAtEpochSeconds }
+    }
+
     fun updateTokens(
         sessionToken: String,
         newElyAccessToken: String,

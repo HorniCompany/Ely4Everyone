@@ -24,8 +24,18 @@ sourceSets {
     }
 }
 
+repositories {
+    mavenCentral()
+    maven("https://repo.papermc.io/repository/maven-public/")
+    maven("https://repo.codemc.io/repository/maven-public/")
+    maven("https://repo.opencollab.dev/main/")
+}
+
 dependencies {
     compileOnly("com.velocitypowered:velocity-api:$velocityApiVersion")
+    compileOnly(files("libs/FastLoginVelocity.jar"))
+    compileOnly("net.skinsrestorer:skinsrestorer-api:15.0.3")
+    compileOnly("org.geysermc.floodgate:api:2.2.3-SNAPSHOT")
     implementation(kotlin("stdlib"))
     testImplementation(kotlin("test"))
 }

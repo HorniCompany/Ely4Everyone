@@ -1,0 +1,10 @@
+services:
+  velocity:
+    container_name: velocity
+    image: eclipse-temurin:21-jre
+    restart: unless-stopped
+    working_dir: /velocity
+    volumes:
+      - .:/velocity
+    network_mode: host
+    command: java -Xms512M -Xmx1G -XX:+UseG1GC -XX:G1HeapRegionSize=4M -XX:+UnlockExperimentalVMOptions -XX:+ParallelRefProcEnabled -Dauthlibinjector.ignoredPackages=com.velocitypowered.proxy.connection.client -javaagent:authlib-injector-1.2.7.jar=ely.by -jar velocity.jar

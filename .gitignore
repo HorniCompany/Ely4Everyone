@@ -31,6 +31,7 @@ replay_pid*
 # Local sandbox and server data
 servers/
 deploy.sh
+AGENTS.md
 
 # Local environment / secrets
 local.properties

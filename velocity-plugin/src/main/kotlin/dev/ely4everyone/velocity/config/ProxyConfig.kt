@@ -4,6 +4,9 @@ import dev.ely4everyone.shared.host.EmbeddedAuthHostConfig
 import java.util.Properties
 
 data class ProxyConfig(
+    val authMode: String = "FULL_HYBRID",
+    val enableFastloginHook: Boolean = true,
+    val enableSkinsrestorerHook: Boolean = true,
     val trustedIssuer: String = "local-dev",
     val expectedAudience: String = "local-network",
     val ticketSigningKey: String = "change-me",
@@ -39,6 +42,9 @@ data class ProxyConfig(
     }
 
     fun toProperties(): Properties = Properties().also { props ->
+        props.setProperty("auth_mode", authMode)
+        props.setProperty("enable_fastlogin_hook", enableFastloginHook.toString())
+        props.setProperty("enable_skinsrestorer_hook", enableSkinsrestorerHook.toString())
         props.setProperty("trusted_issuer", trustedIssuer)
         props.setProperty("expected_audience", expectedAudience)
         props.setProperty("ticket_signing_key", ticketSigningKey)
@@ -56,6 +62,9 @@ data class ProxyConfig(
 
     companion object {
         fun fromProperties(properties: Properties): ProxyConfig = ProxyConfig(
+            authMode = properties.getProperty("auth_mode", "FULL_HYBRID"),
+            enableFastloginHook = properties.getProperty("enable_fastlogin_hook", "true").toBooleanStrictOrNull() ?: true,
+            enableSkinsrestorerHook = properties.getProperty("enable_skinsrestorer_hook", "true").toBooleanStrictOrNull() ?: true,
             trustedIssuer = properties.getProperty("trusted_issuer", "local-dev"),
             expectedAudience = properties.getProperty("expected_audience", "local-network"),
             ticketSigningKey = properties.getProperty("ticket_signing_key", "change-me"),

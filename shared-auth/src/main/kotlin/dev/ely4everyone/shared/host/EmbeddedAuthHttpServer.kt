@@ -89,6 +89,7 @@ class EmbeddedAuthHttpServer(
             createContext("/sessionserver/session/minecraft/hasJoined") { exchange -> handleSessionHasJoined(exchange) }
             createContext("/sessionserver/session/minecraft/profile") { exchange -> handleSessionProfile(exchange) }
             createContext("/oauth/callback") { exchange -> handleOAuthCallback(exchange) }
+            createContext("/api/v1/auth/limboauth") { exchange -> handleLimboAuthIsPremium(exchange) }
             start()
         }
         logger.info(
@@ -108,6 +109,79 @@ class EmbeddedAuthHttpServer(
     }
 
     fun consumeIssuedTicketRecord(ticketId: String): IssuedLoginTicketRecord? = issuedLoginTicketStore.consume(ticketId)
+
+    private fun handleLimboAuthIsPremium(exchange: HttpExchange) {
+        try {
+            if (exchange.requestMethod != "GET") {
+                writeText(exchange, 405, "application/json; charset=utf-8", """{"error": "Method Not Allowed"}""")
+                return
+            }
+
+            // Path is /api/v1/auth/limboauth/<username>
+            val path = exchange.requestURI.path
+            val parts = path.split("/")
+            if (parts.size < 6) {
+                writeText(exchange, 400, "application/json; charset=utf-8", """{"error": "Bad Request"}""")
+                return
+            }
+
+            val username = parts[5]
+            val session = clientSessionStore.findByUsername(username)
+
+            if (session != null) {
+                // Return 200 OK natively
+                val response = """{"name":"$username","id":"${session.uuid.replace("-", "")}"}"""
+                writeText(exchange, 200, "application/json; charset=utf-8", response)
+                return
+            }
+            
+            // Not in session store. Cascade to Ely.by to support Mod users who didn't Oauth loop
+            try {
+                val client = java.net.http.HttpClient.newHttpClient()
+                
+                // 1. Check Ely.by (Requires POST with array of names)
+                val elyRequest = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create("https://authserver.ely.by/api/profiles/minecraft"))
+                    .header("Content-Type", "application/json")
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString("[\"$username\"]"))
+                    .build()
+                val elyResponse = client.send(elyRequest, java.net.http.HttpResponse.BodyHandlers.ofString())
+                
+                if (elyResponse.statusCode() == 200) {
+                    val bodyStr = elyResponse.body().trim()
+                    if (bodyStr.startsWith("[") && bodyStr.length > 5) {
+                        // Extract first object since it returns an array
+                        val objContent = bodyStr.substring(1, bodyStr.length - 1).trim()
+                        if (objContent.isNotEmpty()) {
+                            writeText(exchange, 200, "application/json; charset=utf-8", objContent)
+                            return
+                        }
+                    }
+                }
+
+                // 2. Check Mojang
+                val mojangRequest = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create("https://api.mojang.com/users/profiles/minecraft/$username"))
+                    .GET()
+                    .build()
+                val mojangResponse = client.send(mojangRequest, java.net.http.HttpResponse.BodyHandlers.ofString())
+                
+                if (mojangResponse.statusCode() == 200) {
+                    writeText(exchange, 200, "application/json; charset=utf-8", mojangResponse.body())
+                    return
+                }
+            } catch (netEx: Exception) {
+                logger.warn("Network error during LimboAuth profile check", netEx)
+            }
+
+            // LimboAuth expects the exact Mojang 404 response
+            val notFoundBody = """{"path":"$path","error":"Not Found","errorMessage":"Couldn't find any profile with name $username"}"""
+            writeText(exchange, 404, "application/json; charset=utf-8", notFoundBody)
+        } catch (e: Exception) {
+            logger.error("Error handling LimboAuth isPremium request", e)
+            writeText(exchange, 500, "application/json; charset=utf-8", """{"error": "Internal Server Error"}""")
+        }
+    }
 
     private fun handleHealth(exchange: HttpExchange) {
         writeText(
