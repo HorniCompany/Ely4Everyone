@@ -41,7 +41,3 @@ local.properties
 *.keystore
 *.p12
 *.pem
-
-# Local source artwork
-img/E.png
-img/Ely4Everyone.png

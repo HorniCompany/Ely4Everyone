@@ -15,6 +15,7 @@ data class ClientAuthSession(
     val username: String,
     val uuid: String,
     val elyAccessToken: String,
+    val refreshToken: String?,
     val createdAtEpochSeconds: Long,
     val expiresAtEpochSeconds: Long,
     val properties: List<AuthProfileProperty>,
@@ -34,6 +35,7 @@ class ClientAuthSessionStore(
         username: String,
         uuid: String,
         elyAccessToken: String,
+        refreshToken: String?,
         properties: List<AuthProfileProperty>,
         now: Instant = Instant.now(),
     ): ClientAuthSession {
@@ -43,6 +45,7 @@ class ClientAuthSessionStore(
             username = username,
             uuid = uuid,
             elyAccessToken = elyAccessToken,
+            refreshToken = refreshToken,
             createdAtEpochSeconds = now.epochSecond,
             expiresAtEpochSeconds = now.plusSeconds(ttlSeconds).epochSecond,
             properties = properties,
@@ -60,6 +63,23 @@ class ClientAuthSessionStore(
     fun latest(now: Instant = Instant.now()): ClientAuthSession? {
         purgeExpired(now)
         return sessions.values.maxByOrNull { it.createdAtEpochSeconds }
+    }
+
+    fun updateTokens(
+        sessionToken: String,
+        newElyAccessToken: String,
+        newRefreshToken: String?,
+        newExpiresAtEpochSeconds: Long,
+    ): ClientAuthSession? {
+        val session = sessions[sessionToken] ?: return null
+        val updated = session.copy(
+            elyAccessToken = newElyAccessToken,
+            refreshToken = newRefreshToken ?: session.refreshToken,
+            expiresAtEpochSeconds = newExpiresAtEpochSeconds
+        )
+        sessions[sessionToken] = updated
+        saveToDisk()
+        return updated
     }
 
     private fun purgeExpired(now: Instant) {

@@ -85,6 +85,37 @@ class ElyOAuthClient(
         )
     }
 
+    fun refreshToken(refreshToken: String): ElyTokenResponse {
+        val formBody = listOf(
+            "client_id" to settings.clientId,
+            "client_secret" to settings.clientSecret,
+            "grant_type" to "refresh_token",
+            "refresh_token" to refreshToken,
+        ).joinToString("&") { (key, value) ->
+            key + "=" + URLEncoder.encode(value, StandardCharsets.UTF_8)
+        }
+        val response = httpClient.send(
+            HttpRequest.newBuilder(URI.create("https://account.ely.by/api/oauth2/v1/token"))
+                .timeout(Duration.ofSeconds(15))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString(formBody))
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        if (response.statusCode() !in 200..299) {
+            val error = JsonFieldReader.readString(response.body(), "error_description")
+                ?: JsonFieldReader.readString(response.body(), "error")
+                ?: "HTTP ${response.statusCode()}"
+            throw IllegalStateException("Failed to refresh Ely token: $error")
+        }
+        return ElyTokenResponse(
+            accessToken = JsonFieldReader.readString(response.body(), "access_token")
+                ?: throw IllegalStateException("Ely token response does not contain access_token"),
+            expiresInSeconds = JsonFieldReader.readLong(response.body(), "expires_in") ?: 0L,
+            refreshToken = JsonFieldReader.readString(response.body(), "refresh_token"),
+        )
+    }
+
     fun fetchAccountInfo(accessToken: String): ElyAccountInfo {
         val response = httpClient.send(
             HttpRequest.newBuilder(URI.create("https://account.ely.by/api/account/v1/info"))

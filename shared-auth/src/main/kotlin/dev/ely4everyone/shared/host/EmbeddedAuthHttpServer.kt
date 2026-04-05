@@ -229,23 +229,41 @@ class EmbeddedAuthHttpServer(
     }
 
     private fun handleLatestSession(exchange: HttpExchange) {
-        val session = clientSessionStore.latest()
-        if (session == null) {
+        var sessionVar = clientSessionStore.latest()
+        if (sessionVar == null) {
             writeText(exchange, 404, "text/plain; charset=utf-8", "status=failed\nerror=no_session")
             return
         }
-        val textures = session.properties.firstOrNull { it.name == "textures" }
+        val currentSession = sessionVar
+        val now = Instant.now()
+        if (currentSession.expiresAtEpochSeconds - now.epochSecond < 10800 && currentSession.refreshToken != null) {
+            runCatching {
+                val tokenResponse = oauthClient.refreshToken(currentSession.refreshToken!!)
+                val newExpiresAt = now.plusSeconds(config.clientSessionTtlSeconds).epochSecond
+                sessionVar = clientSessionStore.updateTokens(
+                    currentSession.sessionToken,
+                    tokenResponse.accessToken,
+                    tokenResponse.refreshToken,
+                    newExpiresAt
+                ) ?: sessionVar
+                logger.info("Automatically refreshed Ely access token for ${currentSession.username}")
+            }.onFailure {
+                logger.warn("Failed to auto-refresh Ely token for session ${currentSession.sessionToken}", it)
+            }
+        }
+        val finalSession = sessionVar!!
+        val textures = finalSession.properties.firstOrNull { it.name == "textures" }
         writeText(
             exchange,
             200,
             "text/plain; charset=utf-8",
             """
             status=completed
-            auth_session_token=${session.sessionToken}
-            ely_access_token=${session.elyAccessToken}
-            username=${session.username}
-            uuid=${session.uuid}
-            exp=${session.expiresAtEpochSeconds}
+            auth_session_token=${finalSession.sessionToken}
+            ely_access_token=${finalSession.elyAccessToken}
+            username=${finalSession.username}
+            uuid=${finalSession.uuid}
+            exp=${finalSession.expiresAtEpochSeconds}
             textures_value=${textures?.value.orEmpty()}
             textures_signature=${textures?.signature.orEmpty()}
             """.trimIndent(),
@@ -334,6 +352,7 @@ class EmbeddedAuthHttpServer(
                 username = accountInfo.username,
                 uuid = accountInfo.uuid,
                 elyAccessToken = tokenResponse.accessToken,
+                refreshToken = tokenResponse.refreshToken,
                 properties = texturesProfile.properties,
             )
             stateStore.complete(

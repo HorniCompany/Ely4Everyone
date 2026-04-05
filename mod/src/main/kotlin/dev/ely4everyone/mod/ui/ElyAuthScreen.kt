@@ -7,6 +7,8 @@ import dev.ely4everyone.mod.config.AuthHostTrustState
 import dev.ely4everyone.mod.config.ClientAuthConfig
 import dev.ely4everyone.mod.config.ModConfig
 import dev.ely4everyone.mod.config.ModConfigStore
+import dev.ely4everyone.mod.session.TokenHealthMonitor
+import dev.ely4everyone.mod.session.TokenHealthMonitor.TokenHealth
 import dev.ely4everyone.mod.host.AuthHostActionPolicy
 import dev.ely4everyone.mod.host.AuthHostCatalog
 import dev.ely4everyone.mod.host.AuthHostEntry
@@ -67,6 +69,7 @@ class ElyAuthScreen(
     private lateinit var nextHostButton: ButtonWidget
     private lateinit var customHostField: TextFieldWidget
     private lateinit var skinWidget: PlayerSkinWidget
+    private lateinit var refreshSessionButton: ButtonWidget
 
     // ── Skin preview ──
     private var previewSourceKey: String? = null
@@ -134,6 +137,23 @@ class ElyAuthScreen(
             }.dimensions(contentLeft, btnY, buttonWidth, 24).build(),
         )
 
+        // ── SUCCESS mode: refresh session button ──
+        refreshSessionButton = addDrawableChild(
+            ButtonWidget.builder(Text.literal("Обновить сессию")) {
+                val success = AuthWorkflowManager.syncLatestSessionFromAuthHost()
+                if (success) {
+                    TokenHealthMonitor.forceReevaluate()
+                    mode = Mode.SUCCESS
+                } else {
+                    // If sync failed, start a new browser login
+                    saveConfig()
+                    AuthWorkflowManager.startBrowserLogin()
+                    mode = Mode.POLLING
+                }
+                refreshWidgets()
+            }.dimensions(contentLeft, btnY + 26, buttonWidth, buttonHeight).build(),
+        )
+
         // ── POLLING mode widgets ──
         cancelButton = addDrawableChild(
             ButtonWidget.builder(Text.literal("Отмена")) {
@@ -157,6 +177,7 @@ class ElyAuthScreen(
             ButtonWidget.builder(Text.literal("Выйти")) {
                 AuthWorkflowManager.clearSession()
                 clearPreviewTexture()
+                TokenHealthMonitor.forceReevaluate()
                 mode = Mode.LOGIN
                 refreshWidgets()
             }.dimensions(contentLeft, btnY + 50, smallButtonWidth, buttonHeight).build(),
@@ -197,6 +218,7 @@ class ElyAuthScreen(
             authState.status == AuthFlowStatus.SUCCESS || session.hasUsableAuthSession() -> {
                 if (mode != Mode.SUCCESS) {
                     mode = Mode.SUCCESS
+                    TokenHealthMonitor.forceReevaluate()
                     refreshWidgets()
                 }
             }
@@ -209,6 +231,12 @@ class ElyAuthScreen(
                 mode = Mode.POLLING
                 refreshWidgets()
             }
+        }
+
+        // If token expired while on SUCCESS screen, switch to LOGIN
+        if (mode == Mode.SUCCESS && TokenHealthMonitor.currentHealth() == TokenHealth.EXPIRED) {
+            mode = Mode.LOGIN
+            refreshWidgets()
         }
 
         pollPreviewTexture()
@@ -355,23 +383,26 @@ class ElyAuthScreen(
         context.drawTextWithShadow(textRenderer, Text.literal("Ник: $username"), infoLeft, infoY, COLOR_TEXT)
         context.drawTextWithShadow(textRenderer, Text.literal("UUID: ${uuid.take(13)}..."), infoLeft, infoY + 14, COLOR_DIM)
         context.drawTextWithShadow(textRenderer, Text.literal("Хост: $host"), infoLeft, infoY + 28, COLOR_DIM)
-        context.drawTextWithShadow(textRenderer, Text.literal("Сессия: активна"), infoLeft, infoY + 42, COLOR_SUCCESS)
 
-        // Restart hint
-        context.drawCenteredTextWithShadow(
-            textRenderer,
-            Text.literal("⚠ Перезапустите клиент для"),
-            centerX,
-            panelTop + 132,
-            COLOR_WARNING,
-        )
-        context.drawCenteredTextWithShadow(
-            textRenderer,
-            Text.literal("применения Ely-сессии"),
-            centerX,
-            panelTop + 144,
-            COLOR_WARNING,
-        )
+        // Dynamic session status line with health indicator
+        val health = TokenHealthMonitor.currentHealth()
+        val remaining = TokenHealthMonitor.remainingTimeText()
+        val (statusText, statusColor) = when (health) {
+            TokenHealth.HEALTHY -> {
+                val text = if (remaining != null) "Сессия: ✅ $remaining" else "Сессия: активна ✅"
+                text to COLOR_SUCCESS
+            }
+            TokenHealth.EXPIRING_SOON -> {
+                val text = if (remaining != null) "Сессия: ⚠ $remaining" else "Сессия: скоро истечёт ⚠"
+                text to COLOR_WARNING
+            }
+            TokenHealth.EXPIRED -> "Сессия: истекла ❌" to COLOR_ERROR
+            TokenHealth.NOT_AUTHENTICATED -> "Сессия: не активна" to COLOR_DIM
+        }
+        context.drawTextWithShadow(textRenderer, Text.literal(statusText), infoLeft, infoY + 42, statusColor)
+
+        // Show refresh button only when expiring soon
+        refreshSessionButton.visible = health == TokenHealth.EXPIRING_SOON
     }
 
     private fun renderError(context: DrawContext, panelTop: Int) {
@@ -425,6 +456,8 @@ class ElyAuthScreen(
         logoutButton.visible = isSuccess
         doneButton.visible = isSuccess
         skinWidget.visible = isSuccess
+        // refreshSessionButton visibility is controlled in renderSuccess based on health
+        refreshSessionButton.visible = false
 
         // ERROR
         retryButton.visible = isError

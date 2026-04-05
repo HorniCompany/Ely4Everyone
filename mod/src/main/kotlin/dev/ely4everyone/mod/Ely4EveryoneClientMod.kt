@@ -5,6 +5,7 @@ import dev.ely4everyone.mod.config.ModConfigStore
 import dev.ely4everyone.mod.identity.MinecraftClientSessionBridge
 import dev.ely4everyone.mod.network.LoginQueryResponder
 import dev.ely4everyone.mod.session.ClientSessionStore
+import dev.ely4everyone.mod.session.TokenHealthMonitor
 import dev.ely4everyone.mod.ui.TitleScreenIntegration
 import net.fabricmc.api.ClientModInitializer
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
@@ -25,6 +26,7 @@ class Ely4EveryoneClientMod : ClientModInitializer {
         LoginQueryResponder.register()
         TitleScreenIntegration.register()
         ClientTickEvents.END_CLIENT_TICK.register(AuthWorkflowManager::tick)
+        ClientTickEvents.END_CLIENT_TICK.register(TokenHealthMonitor::tick)
 
         logger.info(
             "Ely4Everyone client initialized. relayBaseUrl={}, discoveryMode={}, preferredLoginMode={}, hasSession={}, {}",
