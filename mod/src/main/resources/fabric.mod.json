@@ -3,7 +3,7 @@
   "id": "ely4everyone",
   "version": "${version}",
   "name": "Ely4Everyone",
-  "icon": "icon.png",
+  "icon": "assets/ely4everyone/icon.png",
   "description": "Ely identity layer for Fabric clients.",
   "authors": [
     "cokeef"
