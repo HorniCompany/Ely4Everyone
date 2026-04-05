@@ -15,11 +15,12 @@ import com.velocitypowered.api.util.GameProfile
 import dev.ely4everyone.velocity.auth.ReplayProtection
 import dev.ely4everyone.velocity.auth.TrustedLoginRegistry
 import dev.ely4everyone.velocity.auth.VelocityProfilePropertyAdapter
-import dev.ely4everyone.velocity.auth.http.EmbeddedAuthHttpServer
-import dev.ely4everyone.velocity.auth.http.IssuedLoginTicketRecord
+import dev.ely4everyone.shared.host.EmbeddedAuthHttpServer
+import dev.ely4everyone.shared.host.IssuedLoginTicketRecord
+import dev.ely4everyone.shared.protocol.AuthProtocolCodec
+import dev.ely4everyone.shared.protocol.LoginChallenge
+import dev.ely4everyone.shared.ticket.AuthTicketCodec
 import dev.ely4everyone.velocity.config.ProxyConfigStore
-import dev.ely4everyone.velocity.protocol.LoginChallenge
-import dev.ely4everyone.velocity.protocol.LoginChallengeCodec
 import org.slf4j.Logger
 import java.nio.file.Path
 import java.time.Instant
@@ -51,7 +52,7 @@ class Ely4EveryoneVelocityPlugin @Inject constructor(
         ProxyConfigStore.saveDefaultsIfMissing(dataDirectory)
         config = ProxyConfigStore.load(dataDirectory)
         server.channelRegistrar.register(LOGIN_CHANNEL)
-        embeddedAuthHttpServer = EmbeddedAuthHttpServer(config, logger, dataDirectory).also { authServer ->
+        embeddedAuthHttpServer = EmbeddedAuthHttpServer(config.toEmbeddedAuthHostConfig("velocity-embedded"), logger, dataDirectory).also { authServer ->
             authServer.start()
         }
 
@@ -76,15 +77,16 @@ class Ely4EveryoneVelocityPlugin @Inject constructor(
         val loginConnection = event.connection as? LoginPhaseConnection ?: return
         val username = event.username
         val challenge = LoginChallenge(
-            version = "v1",
+            version = "v2",
             nonce = UUID.randomUUID().toString(),
             audience = config.expectedAudience,
+            hostId = "velocity-embedded",
         )
 
         logger.info("Sending Ely4Everyone login challenge to {} with nonce {}", username, challenge.nonce)
         loginConnection.sendLoginPluginMessage(
             LOGIN_CHANNEL,
-            LoginChallengeCodec.encodeChallenge(challenge),
+            AuthProtocolCodec.encodeChallenge(challenge),
         ) { response ->
             try {
                 logger.info("Received raw Ely4Everyone login response callback from {}.", username)
@@ -118,7 +120,7 @@ class Ely4EveryoneVelocityPlugin @Inject constructor(
     }
 
     private fun handleLoginResponse(username: String, challenge: LoginChallenge, response: ByteArray?): dev.ely4everyone.velocity.auth.TrustedLogin? {
-        val parsed = LoginChallengeCodec.decodeResponse(response)
+        val parsed = AuthProtocolCodec.decodeResponse(response)
         if (parsed.ticket.isNullOrBlank()) {
             logger.info("No Ely ticket received for {}. Falling back to cracked flow.", username)
             return null
@@ -126,7 +128,7 @@ class Ely4EveryoneVelocityPlugin @Inject constructor(
 
         logger.info("Received Ely ticket response from {}.", username)
 
-        val verified = dev.ely4everyone.velocity.ticket.RelayTicketVerifier.verify(
+        val verified = AuthTicketCodec.verify(
             token = parsed.ticket,
             trustedIssuer = config.trustedIssuer,
             expectedAudience = config.expectedAudience,

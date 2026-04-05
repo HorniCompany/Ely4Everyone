@@ -30,6 +30,7 @@ replay_pid*
 
 # Local sandbox and server data
 servers/
+deploy.sh
 
 # Local environment / secrets
 local.properties

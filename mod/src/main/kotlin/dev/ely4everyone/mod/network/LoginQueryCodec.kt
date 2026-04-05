@@ -8,6 +8,7 @@ data class LoginChallengeRequest(
     val version: String,
     val nonce: String?,
     val audience: String?,
+    val hostId: String?,
 )
 
 data class LoginChallengeResponse(
@@ -23,12 +24,13 @@ object LoginQueryCodec {
             version = values["ver"] ?: "unknown",
             nonce = values["nonce"],
             audience = values["aud"],
+            hostId = values["host_id"],
         )
     }
 
     fun encodeResponse(ticket: String?): PacketByteBuf {
         val payload = buildString {
-            appendLine("ver=v1")
+            appendLine("ver=v2")
             appendLine("ticket=${ticket.orEmpty()}")
         }.trim()
 
@@ -51,4 +53,3 @@ object LoginQueryCodec {
             .toMap()
     }
 }
-

@@ -1,5 +1,7 @@
 package dev.ely4everyone.velocity.auth.http
 
+import dev.ely4everyone.shared.auth.AuthProfileProperty
+import dev.ely4everyone.shared.session.ClientAuthSessionStore
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertNotNull

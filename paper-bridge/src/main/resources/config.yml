@@ -2,4 +2,17 @@ enabled: true
 log-trusted-logins: true
 auto-login-delay-ticks: 20
 auto-login-command: "authme forcelogin {player}"
-
+auth-host:
+  enabled: true
+  bind-host: "127.0.0.1"
+  bind-port: 19085
+  public-base-url: "http://127.0.0.1:19085"
+  trusted-issuer: "paper-local"
+  expected-audience: "ely-network"
+  ticket-signing-key: "change-me"
+  ely-client-id: ""
+  ely-client-secret: ""
+  oauth-scopes: "account_info minecraft_server_session"
+  oauth-state-ttl-seconds: 300
+  client-session-ttl-seconds: 86400
+  issued-ticket-ttl-seconds: 300

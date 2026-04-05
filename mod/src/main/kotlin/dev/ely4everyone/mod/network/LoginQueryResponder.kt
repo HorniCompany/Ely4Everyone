@@ -40,7 +40,7 @@ object LoginQueryResponder {
             sessionState.hasUsableAuthSession(),
         )
 
-        if (challenge.version != "v1") {
+        if (challenge.version != "v2") {
             logger.warn("Unsupported Ely4Everyone login challenge version: {}", challenge.version)
             return CompletableFuture.completedFuture(null)
         }

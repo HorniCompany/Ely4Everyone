@@ -3,21 +3,27 @@ package dev.ely4everyone.mod.config
 import java.util.Properties
 
 data class ModConfig(
-    val relayBaseUrl: String = "http://127.0.0.1:18085",
-    val selectedAuthServerId: String = AuthServerPresets.LOCAL_VELOCITY,
-    val customAuthServerUrl: String = "http://127.0.0.1:18085",
-    val serverDiscoveryMode: String = "auto",
+    val relayBaseUrl: String = ClientAuthConfig.DEFAULT_REMOTE_HOST_URL,
+    val selectedAuthServerId: String = ClientAuthConfig.DEFAULT_REMOTE_HOST_ID,
+    val customAuthServerUrl: String = ClientAuthConfig.DEFAULT_CUSTOM_HOST_URL,
+    val serverDiscoveryMode: String = "scan-first",
     val preferredLoginMode: String = "ely-first",
+    val rememberedHosts: List<RememberedAuthHost> = emptyList(),
 ) {
     fun toProperties(): Properties = Properties().also { props ->
-        props.setProperty("relay_base_url", relayBaseUrl)
-        props.setProperty("selected_auth_server_id", selectedAuthServerId)
-        props.setProperty("custom_auth_server_url", customAuthServerUrl)
-        props.setProperty("server_discovery_mode", serverDiscoveryMode)
-        props.setProperty("preferred_login_mode", preferredLoginMode)
+        ClientAuthConfig(
+            selectedHostId = selectedAuthServerId,
+            customHostUrl = customAuthServerUrl,
+            rememberedHosts = rememberedHosts,
+            discoveryMode = serverDiscoveryMode,
+            preferredLoginMode = preferredLoginMode,
+        ).toProperties().forEach { key, value -> props[key] = value }
+        props.setProperty("relay_base_url", resolvedAuthServerBaseUrl())
     }
 
     fun resolvedAuthServerBaseUrl(): String {
+        rememberedHosts.firstOrNull { it.id == selectedAuthServerId && it.trustState == AuthHostTrustState.TRUSTED }
+            ?.let { return it.baseUrl }
         val preset = AuthServerPresets.byId(selectedAuthServerId)
         return when (preset.id) {
             AuthServerPresets.CUSTOM -> customAuthServerUrl.ifBlank { relayBaseUrl }
@@ -26,12 +32,16 @@ data class ModConfig(
     }
 
     companion object {
-        fun fromProperties(properties: Properties): ModConfig = ModConfig(
-            relayBaseUrl = properties.getProperty("relay_base_url", "http://127.0.0.1:18085"),
-            selectedAuthServerId = properties.getProperty("selected_auth_server_id", AuthServerPresets.LOCAL_VELOCITY),
-            customAuthServerUrl = properties.getProperty("custom_auth_server_url", "http://127.0.0.1:18085"),
-            serverDiscoveryMode = properties.getProperty("server_discovery_mode", "auto"),
-            preferredLoginMode = properties.getProperty("preferred_login_mode", "ely-first"),
-        )
+        fun fromProperties(properties: Properties): ModConfig {
+            val typed = ClientAuthConfig.fromProperties(properties)
+            return ModConfig(
+                relayBaseUrl = properties.getProperty("relay_base_url", typed.resolveAuthHostBaseUrl()),
+                selectedAuthServerId = typed.selectedHostId,
+                customAuthServerUrl = typed.customHostUrl,
+                serverDiscoveryMode = typed.discoveryMode,
+                preferredLoginMode = typed.preferredLoginMode,
+                rememberedHosts = typed.rememberedHosts,
+            )
+        }
     }
 }

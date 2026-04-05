@@ -15,6 +15,15 @@ java {
     withSourcesJar()
 }
 
+sourceSets {
+    named("main") {
+        java.srcDir("../shared-auth/src/main/kotlin")
+    }
+    named("test") {
+        java.srcDir("../shared-auth/src/test/kotlin")
+    }
+}
+
 dependencies {
     compileOnly("com.velocitypowered:velocity-api:$velocityApiVersion")
     implementation(kotlin("stdlib"))

@@ -1,5 +1,6 @@
 package dev.ely4everyone.velocity.config
 
+import dev.ely4everyone.shared.host.EmbeddedAuthHostConfig
 import java.util.Properties
 
 data class ProxyConfig(
@@ -17,6 +18,26 @@ data class ProxyConfig(
     val clientSessionTtlSeconds: Long = 86400,
     val issuedTicketTtlSeconds: Long = 300,
 ) {
+    fun toEmbeddedAuthHostConfig(hostId: String = "velocity-embedded"): EmbeddedAuthHostConfig {
+        return EmbeddedAuthHostConfig(
+            hostId = hostId,
+            displayName = "Velocity embedded auth host",
+            trustedIssuer = trustedIssuer,
+            expectedAudience = expectedAudience,
+            ticketSigningKey = ticketSigningKey,
+            enabled = embeddedAuthEnabled,
+            bindHost = embeddedAuthBindHost,
+            bindPort = embeddedAuthBindPort,
+            publicBaseUrl = publicBaseUrl,
+            clientId = elyClientId,
+            clientSecret = elyClientSecret,
+            oauthScopes = oauthScopes,
+            oauthStateTtlSeconds = oauthStateTtlSeconds,
+            clientSessionTtlSeconds = clientSessionTtlSeconds,
+            issuedTicketTtlSeconds = issuedTicketTtlSeconds,
+        )
+    }
+
     fun toProperties(): Properties = Properties().also { props ->
         props.setProperty("trusted_issuer", trustedIssuer)
         props.setProperty("expected_audience", expectedAudience)

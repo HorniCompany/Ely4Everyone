@@ -1,5 +1,7 @@
 package dev.ely4everyone.velocity.auth.http
 
+import dev.ely4everyone.shared.oauth.OAuthStateStore
+import dev.ely4everyone.shared.oauth.PendingAuthStatus
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals

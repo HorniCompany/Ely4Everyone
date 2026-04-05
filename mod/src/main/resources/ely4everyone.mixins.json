@@ -3,12 +3,14 @@
   "package": "dev.ely4everyone.mod.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "client.EnvironmentMixin",
     "client.ClientLoginNetworkHandlerMixin",
     "client.MinecraftClientAccessor",
     "client.MinecraftClientGameProfileMixin",
     "client.PlayerSkinProviderInvoker",
     "client.PlayerSkinProviderMixin",
-    "client.YggdrasilMinecraftSessionServiceMixin"
+    "client.YggdrasilMinecraftSessionServiceMixin",
+    "client.YggdrasilResearchTraceMixin"
   ],
   "injectors": {
     "defaultRequire": 1

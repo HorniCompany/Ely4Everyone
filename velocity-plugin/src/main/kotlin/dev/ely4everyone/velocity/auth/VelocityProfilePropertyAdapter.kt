@@ -1,6 +1,6 @@
 package dev.ely4everyone.velocity.auth
 
-import dev.ely4everyone.velocity.auth.http.AuthProfileProperty
+import dev.ely4everyone.shared.auth.AuthProfileProperty
 
 data class VelocityProfileProperty(
     val name: String,

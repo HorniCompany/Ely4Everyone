@@ -7,20 +7,20 @@ data class AuthServerPreset(
 )
 
 object AuthServerPresets {
-    const val LOCAL_VELOCITY: String = "local_velocity"
-    const val HORNI_RELAY: String = "horni_relay"
-    const val CUSTOM: String = "custom"
+    const val LOCAL_VELOCITY: String = "local-embedded"
+    const val HORNI_RELAY: String = ClientAuthConfig.DEFAULT_REMOTE_HOST_ID
+    const val CUSTOM: String = ClientAuthConfig.CUSTOM_HOST_ID
 
     val ALL: List<AuthServerPreset> = listOf(
         AuthServerPreset(
             id = LOCAL_VELOCITY,
-            label = "Локальный Velocity",
+            label = "Локальный auth-host",
             defaultUrl = "http://127.0.0.1:18085",
         ),
         AuthServerPreset(
             id = HORNI_RELAY,
             label = "horni.cc relay",
-            defaultUrl = "https://horni.cc/auth/ely4everyone",
+            defaultUrl = ClientAuthConfig.DEFAULT_REMOTE_HOST_URL,
         ),
         AuthServerPreset(
             id = CUSTOM,

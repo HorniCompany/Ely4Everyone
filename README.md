@@ -5,221 +5,168 @@
 
 ![Ely4Everyone banner](img/readme-banner.jpg)
 
-> Fabric-мод, который превращает любой совместимый клиент в Ely.by-клиент.
+> Fabric-мод, который делает Ely.by-режим доступным без ручной установки `authlib-injector`.
 
 > [!WARNING]
-> Этот проект написан преимущественно при помощи AI и должен рассматриваться как **экспериментальный**.
+> Проект экспериментальный и написан ПОЛНОСТЬЮ с помощью AI.
 >
 > Это значит:
->
-> - значительная часть кода, структуры и текста была сгенерирована или собрана с помощью AI;
-> - проект может содержать архитектурные ошибки, скрытые баги, небезопасные решения и непродуманные компромиссы;
-> - код не следует считать автоматически качественным, безопасным или production-ready только потому, что он опубликован на GitHub.
->
-> Если вы хотите использовать `Ely4Everyone`, форкать его или запускать на реальном сервере, пожалуйста, сначала проведите **собственный аудит кода, конфигов, сетевого поведения и модели безопасности**.
+> - в коде и архитектуре всё ещё возможны грубые ошибки;
+> - часть направлений в репозитории является R&D, а не production-ready функциональностью;
+> - перед использованием на реальном сервере или в публичной сборке проект нужно аудитить самостоятельно.
 
-`Ely4Everyone` строится как **mod-first проект**. Главная идея не в том, чтобы заставить игроков использовать наш серверный стек, а в том, чтобы дать любому клиенту с `Fabric` нормальную Ely.by-идентичность:
+## Что это за проект
 
-- Ely.by UUID
-- Ely.by nickname
-- Ely.by skins / textures
-- Ely.by session для входа на Ely-authlib сервера
+`Ely4Everyone` — это **mod-first Ely.by client**.
 
-Если игрок запускает Minecraft из любого лаунчера, который умеет грузить `Fabric`, и ставит `Ely4Everyone`, клиент должен вести себя ближе не к "пирату с паролем", а к полноценному Ely.by-пользователю.
+Главная цель не в том, чтобы заставить игроков пользоваться нашим server stack, а в том, чтобы обычный Fabric-клиент:
 
-## Основная цель
+- логинился через Ely.by;
+- получал Ely UUID;
+- получал Ely nickname;
+- получал Ely skins / textures;
+- мог входить на Ely-compatible серверы без отдельного Ely launcher;
+- а на собственных серверах дополнительно получал trusted login flow.
 
-Проект нацелен на два режима, но они не равны по важности.
+## Честная постановка задачи
 
-### 1. Universal Ely Client
+### Что мы хотим
 
-Это главный режим.
+Мы хотим убрать для пользователя ручную возню с `authlib-injector`.
 
-Мод должен:
+То есть идеальный UX такой:
 
-- запускаться из любого лаунчера с `Fabric`;
-- выполнять вход через Ely.by;
-- хранить Ely session на клиенте;
-- подменять локальную Minecraft session на Ely identity;
-- использовать Ely UUID, ник и Ely textures;
-- проходить на серверы, которые уже поддерживают Ely.by через `authlib-injector` или совместимую authlib-схему.
+1. пользователь ставит Fabric-мод;
+2. логинится в Ely.by изнутри игры;
+3. Ely.by-профиль применяется как часть клиентского auth flow;
+4. для пользователя это выглядит как обычная функция мода, а не как настройка `javaagent`.
 
-Именно это и есть изначальная идея проекта: не "наш сервер умеет принять мод", а "мод делает клиент Ely.by-клиентом".
+### Что мы больше не обещаем
 
-### 2. Server-Integrated Fast Login
+Мы **не** считаем реалистичным путь “невидимого runtime-хакинга JVM” изнутри уже запущенной игры:
 
-Это дополнительный режим.
+- не dynamic javaagent attach;
+- не поздний Instrumentation;
+- не “бесшовную смену аккаунта на лету в уже запущенной игре” (hot-swap).
 
-Для собственных серверов можно добавить:
+Этот путь слишком хрупок и не даёт продуктового результата.
 
-- доверенный login channel;
-- fast login / password bypass;
-- интеграцию с `FastLogin`, `AuthMe` и подобными backend-плагинами.
+## Новый технический вектор
 
-Этот слой полезен, но он **не должен быть основным смыслом проекта**.
+Проект теперь сознательно смещён в сторону:
 
-## Что проект должен дать игроку
+- **раннего patching Authlib через Fabric Mixins**;
+- **in-game Ely login UI**;
+- **сохранения Ely session локально**;
+- **применения Ely identity в клиенте**;
+- **embedded auth-host на стороне `velocity-plugin` / `paper-bridge`**;
+- **authlib-injector-style compatibility bridge**, где это нужно.
 
-Игрок с `Ely4Everyone` должен в идеале получить:
+Проще говоря:
 
-- возможность логиниться в Ely.by без отдельного лаунчера;
-- Ely UUID вместо offline UUID;
-- Ely nickname вместо локальной/offline identity;
-- Ely skins и корректные textures properties;
-- проход на Ely-authlib сервера так, как будто клиент изначально понимает Ely.by;
-- на поддерживаемых серверах проекта — login без лишнего пароля.
+мы не пытаемся “встраивать javaagent в уже запущенную JVM” или “на лету поднять сессии в клиенте”.
 
-## Что это не значит
+Мы пытаемся сделать **Fabric-мод, который рано патчит Authlib через Mixins** и использует **Boot-Time Injection** сессии при запуске клиента.
 
-Чтобы не обещать магию:
+## Архитектурная позиция
 
-- vanilla-клиент без `Fabric` не поддерживается;
-- серверы, которые не поддерживают Ely.by вообще, сами по себе не станут Ely-серверами от одного клиентского мода;
-- `client_secret` нельзя безопасно держать внутри open-source клиента;
-- universal Ely client и server-side fast login — это связанные, но разные задачи.
+### 1. Основной продукт — `mod/`
 
-## Архитектура проекта
+`mod/` — главный продукт.
 
-### Fabric mod
+Именно он должен:
 
-Основной продукт проекта.
+- показывать Ely login UI;
+- хранить Ely session;
+- выбирать auth-host;
+- применять Ely profile;
+- работать как Ely-aware client layer.
 
-Сейчас мод отвечает или будет отвечать за:
+### 2. `shared-auth/`
 
-- Ely OAuth/browser flow;
-- хранение Ely session на клиенте;
-- выбор auth host;
-- UI в главном меню;
-- получение Ely identity;
-- подмену локальной клиентской session;
-- подготовку к работе с Ely-authlib серверами;
-- optional login response для server-integrated режима.
+`shared-auth/` — общее ядро:
 
-### Embedded auth host
+- auth/session модели;
+- ticket logic;
+- embedded auth-host;
+- compatibility endpoints;
+- protocol/shared helpers.
 
-Пока Ely OAuth требует `client_secret`, у проекта должен быть backend-компонент.
+### 3. `velocity-plugin/` и `paper-bridge/`
 
-Сейчас этот backend встроен в `Velocity` plugin и выполняет:
+Это официальные server-side интеграции:
 
-- OAuth code exchange;
-- получение Ely account info;
-- выдачу клиентской Ely auth session;
-- dev/test endpoints;
-- challenge-bound login ticket для server-integrated режима.
+- `velocity-plugin/` — proxy-side trusted login и embedded auth-host;
+- `paper-bridge/` — standalone Paper auth-host и bridge к auth plugins.
 
-В долгосрочной модели это не главный продукт, а вспомогательная часть вокруг mod-first клиента.
+### 4. `relay/`
 
-### Velocity plugin
+`relay/` больше не считается целевой архитектурой и выведен из основной линии.
 
-Нужен для собственного серверного режима:
+## Что реально достижимо
 
-- challenge / response логин;
-- валидация Ely tickets;
-- trusted profile application;
-- bridge к backend-серверам.
+На сегодня честная цель проекта выглядит так:
 
-### Paper bridge
+### Реально
 
-Нужен только для серверных сценариев:
+- Ely UUID / nickname / textures на клиенте;
+- Ely login flow внутри мода;
+- trusted Ely login на собственном server stack;
+- частичная или высокая совместимость с Ely-compatible серверами;
+- authlib-injector-like поведение для части сценариев через ранние Mixins и совместимые endpoint bridges.
 
-- auto-login command;
-- интеграция с `AuthMe`-style backend;
-- trusted forwarded UUID flow.
+### Нереалистично как продуктовая цель
 
-## Текущий фокус разработки
+- универсальная замена `authlib-injector` для любых серверов вообще;
+- “полностью прозрачная магия” без источника auth metadata;
+- бесшовная смена account'а (hot-swap) в живом клиенте без перезапуска (это принципиально ломает стейт-менеджмент игры).
 
-Проект уже прошел через прототип `Velocity/Paper`-ветки, и это было полезно:
+## Исследовательская линия
 
-- OAuth flow жив;
-- auth-host жив;
-- challenge/ticket pipeline в целом доказал жизнеспособность;
-- Paper bridge тоже завелся.
+В репозитории уже есть R&D-направление по теме authlib replacement:
 
-Но основной фокус теперь смещается на **universal Ely client внутри мода**.
+- [Authlib Replacement Roadmap](./docs/authlib-replacement-roadmap.md)
+- [Authlib Replacement Notes](./docs/authlib-replacement-notes.md)
 
-То есть следующие важные шаги — это не "еще один серверный костыль", а:
+Смысл этой ветки:
 
-- клиентская Ely session;
-- клиентская Ely identity;
-- клиентская подмена Minecraft session;
-- совместимость с Ely-authlib серверами.
-
-## Текущее состояние
-
-На сегодня в репозитории уже есть:
-
-- рабочий Fabric-мод с UI и Ely auth flow;
-- встроенный auth-host внутри `Velocity`;
-- `Velocity` plugin для trusted login;
-- `Paper bridge` для backend bypass;
-- тестовый стенд `servers/velocity` и `servers/minecraft`.
-
-При этом universal Ely client уже дошел до рабочего mod-first состояния: мод хранит Ely session, восстанавливает Ely identity после перезапуска, подменяет локальную Minecraft session, отдает Ely `GameProfile` и Ely `textures` в клиентский authlib pipeline.
-
-Иными словами, текущая клиентская ветка уже нацелена на практический сценарий: зайти с `Fabric`-модом на Ely-authlib-совместимый сервер и увидеть Ely UUID / nickname / skin без отдельного Ely-лаунчера.
+- не обещать невозможное;
+- а проверить, где именно ранний authlib patching реально может заменить `authlib-injector`.
 
 ## Репозиторий
 
 - `mod/` — основной Fabric-мод
-- `velocity-plugin/` — optional proxy integration
-- `paper-bridge/` — optional backend integration
-- `relay/` — legacy/experimental backend module, не основной вектор проекта
-- `servers/` — локальный тестовый стенд, не входит в публичный репозиторий
+- `shared-auth/` — shared auth/protocol/server core
+- `velocity-plugin/` — proxy integration with embedded auth-host
+- `paper-bridge/` — standalone Paper integration with embedded auth-host
+- `docs/` — протокол, roadmap и исследовательские заметки
+- `servers/` — локальный тестовый стенд, не для коммита runtime state
 
-## Безопасность и доверие
+## Безопасность
 
-Главный неудобный факт остается тем же:
+Главный факт не изменился:
 
-Ely OAuth сейчас требует `client_secret`, а значит полностью автономный open-source клиент без backend-части ограничен.
+Ely OAuth требует server-side секрета.
 
-Поэтому текущая практическая модель такая:
+Поэтому:
 
-- мод open-source;
-- auth host open-source;
-- auth host можно self-host'ить;
-- `client_secret` держится только на серверной стороне;
-- клиент не хранит серверные секреты;
-- короткоживущие login tickets используются только там, где это действительно нужно.
+- open-source клиент не должен хранить `client_secret`;
+- `client_secret` живёт только на стороне auth-host;
+- mod не должен встраивать серверные секреты;
+- короткоживущие tickets и локальная session persistence должны использоваться аккуратно и осознанно.
 
-## Roadmap
+## Текущий фокус разработки
 
-### Universal Ely Client
+Сейчас проект движется не к “ещё одному костылю вокруг прокси”, а к следующему:
 
-- [x] Хранение полной Ely session на клиенте
-- [x] Ely identity manager внутри мода
-- [x] Подмена локальной Minecraft session на Ely identity
-- [x] Ely textures / skins на клиенте
-- [x] Совместимость с Ely-authlib серверами
-- [x] Минимальный UX без лишней ручной настройки
-
-### Server Integration
-
-- [x] Embedded auth host
-- [x] Challenge-bound Ely login ticket
-- [x] Trusted login prototype
-- [x] Paper bridge prototype
-- [ ] Дожать production-grade proxy/backend flow
-
-## Статус идеи
-
-Идея **реальна**, но сложная.
-
-Если формулировать честно:
-
-- сделать мод, который дает Ely UUID/skin/nickname и живет в любом Fabric-совместимом лаунчере — **реально**;
-- сделать из него universal Ely client для Ely-authlib серверов — **реально, и базовая client-side auth/session/profile integration уже собрана в `mod/`**;
-- сделать fast login для своих серверов — **реально и уже частично работает**.
-
-Это не маленький utility-мод. Это полноценный клиентский identity-layer над Minecraft.
-
-## Автор
-
-Основной автор проекта: **Cokeef**.
-
-- GitHub: [@Cokeef](https://github.com/Cokeef)
+- стабилизировать mod-first Ely login;
+- улучшить UX Ely login внутри игры;
+- усилить ранний authlib patching research;
+- довести embedded auth-host до удобного self-host сценария;
+- проверить, где проходит реальная граница между PoC и поддерживаемым продуктом.
 
 ## Лицензия
 
-Проект распространяется по лицензии **MIT**. Это максимально permissive вариант: код можно использовать, менять, публиковать и встраивать в другие проекты, если сохраняются текст лицензии и уведомление об авторстве.
+Проект распространяется по лицензии **MIT**.
 
-Полный текст лицензии лежит в [LICENSE](./LICENSE).
+Полный текст — в [LICENSE](./LICENSE).

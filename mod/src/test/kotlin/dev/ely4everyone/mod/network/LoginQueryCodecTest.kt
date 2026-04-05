@@ -10,21 +10,23 @@ class LoginQueryCodecTest {
         val challengeBuf = PacketByteBufs.create().apply {
             writeBytes(
                 """
-                ver=v1
+                ver=v2
                 nonce=test-nonce
                 aud=test-audience
+                host_id=velocity-local
                 """.trimIndent().toByteArray(),
             )
         }
 
         val challenge = LoginQueryCodec.decodeChallenge(challengeBuf)
-        assertEquals("v1", challenge.version)
+        assertEquals("v2", challenge.version)
         assertEquals("test-nonce", challenge.nonce)
         assertEquals("test-audience", challenge.audience)
+        assertEquals("velocity-local", challenge.hostId)
 
         val responseBuf = LoginQueryCodec.encodeResponse("ticket-123")
         val payload = ByteArray(responseBuf.readableBytes())
         responseBuf.readBytes(payload)
-        assertEquals("ver=v1\nticket=ticket-123", payload.toString(Charsets.UTF_8))
+        assertEquals("ver=v2\nticket=ticket-123", payload.toString(Charsets.UTF_8))
     }
 }

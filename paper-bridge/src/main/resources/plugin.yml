@@ -3,5 +3,4 @@ main: dev.ely4everyone.paper.Ely4EveryonePaperBridgePlugin
 version: ${version}
 api-version: '1.21'
 author: cokeef
-description: AuthMe bridge for Ely4Everyone trusted logins behind Velocity.
-
+description: Standalone Paper auth-host and bridge for Ely4Everyone trusted logins.

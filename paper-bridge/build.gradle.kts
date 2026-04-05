@@ -15,6 +15,12 @@ java {
     withSourcesJar()
 }
 
+sourceSets {
+    named("main") {
+        java.srcDir("../shared-auth/src/main/kotlin")
+    }
+}
+
 dependencies {
     compileOnly("io.papermc.paper:paper-api:$paperApiVersion")
     implementation(kotlin("stdlib"))

@@ -3,13 +3,18 @@ package dev.ely4everyone.mod.ui
 import dev.ely4everyone.mod.auth.AuthFlowState
 import dev.ely4everyone.mod.auth.AuthFlowStatus
 import dev.ely4everyone.mod.auth.AuthWorkflowManager
-import dev.ely4everyone.mod.config.AuthServerPresets
+import dev.ely4everyone.mod.config.AuthHostTrustState
+import dev.ely4everyone.mod.config.ClientAuthConfig
 import dev.ely4everyone.mod.config.ModConfig
 import dev.ely4everyone.mod.config.ModConfigStore
+import dev.ely4everyone.mod.host.AuthHostActionPolicy
+import dev.ely4everyone.mod.host.AuthHostCatalog
+import dev.ely4everyone.mod.host.AuthHostEntry
+import dev.ely4everyone.mod.host.AuthHostSource
+import dev.ely4everyone.mod.host.DiscoveredAuthHost
 import dev.ely4everyone.mod.session.ClientSessionState
 import dev.ely4everyone.mod.session.ClientSessionStore
 import net.minecraft.client.MinecraftClient
-import net.minecraft.client.gl.RenderPipelines
 import net.minecraft.client.gui.DrawContext
 import net.minecraft.client.gui.screen.Screen
 import net.minecraft.client.gui.widget.ButtonWidget
@@ -29,147 +34,141 @@ import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 
+/**
+ * Главный экран мода Ely4Everyone.
+ *
+ * Четыре визуальных режима:
+ * - LOGIN:   выбор auth-host + кнопка «Войти через Ely.by»
+ * - POLLING: ожидание завершения OAuth в браузере
+ * - SUCCESS: авторизован — скин-превью, ник, UUID, статус
+ * - ERROR:   что-то пошло не так — сообщение + «Попробовать снова»
+ */
 class ElyAuthScreen(
     private val parent: Screen,
 ) : Screen(Text.literal("Ely4Everyone")) {
+
+    // ── State ──
+    private enum class Mode { LOGIN, POLLING, SUCCESS, ERROR }
+
+    private var mode: Mode = Mode.LOGIN
     private var workingConfig: ModConfig = ModConfigStore.load()
-    private var stage: ElyAuthStage = ElyAuthStage.HOST_SELECT
-    private var forceHostSelection: Boolean = false
+    private var catalog = rebuildCatalog()
+    private var selectedIndex: Int = 0
+    private var errorMessage: String = ""
 
-    private lateinit var authServerButton: ButtonWidget
-    private lateinit var startLoginButton: ButtonWidget
-    private lateinit var useLatestSessionButton: ButtonWidget
-    private lateinit var hostBackButton: ButtonWidget
-    private lateinit var waitingRetryButton: ButtonWidget
-    private lateinit var waitingCancelButton: ButtonWidget
-    private lateinit var successMenuButton: ButtonWidget
-    private lateinit var successRetryButton: ButtonWidget
-    private lateinit var successHostButton: ButtonWidget
-    private lateinit var errorRetryButton: ButtonWidget
-    private lateinit var errorMenuButton: ButtonWidget
-    private lateinit var errorHostButton: ButtonWidget
-    private lateinit var customAuthServerField: TextFieldWidget
-    private lateinit var playerPreviewWidget: PlayerSkinWidget
+    // ── Widgets (initialized in init()) ──
+    private lateinit var loginButton: ButtonWidget
+    private lateinit var cancelButton: ButtonWidget
+    private lateinit var retryButton: ButtonWidget
+    private lateinit var logoutButton: ButtonWidget
+    private lateinit var doneButton: ButtonWidget
+    private lateinit var closeButton: ButtonWidget
+    private lateinit var prevHostButton: ButtonWidget
+    private lateinit var nextHostButton: ButtonWidget
+    private lateinit var customHostField: TextFieldWidget
+    private lateinit var skinWidget: PlayerSkinWidget
 
+    // ── Skin preview ──
     private var previewSourceKey: String? = null
     private var previewFuture: CompletableFuture<NativeImage?>? = null
     private var previewTexture: NativeImageBackedTexture? = null
     private var previewTextureId: Identifier? = null
 
-    override fun init() {
-        workingConfig = ModConfigStore.load()
-        stage = determineStage()
-        val layout = layout()
+    // ── Layout constants ──
+    private val panelWidth = 280
+    private val buttonWidth = 240
+    private val buttonHeight = 20
+    private val smallButtonWidth = 114
 
-        customAuthServerField = TextFieldWidget(
+    // ── Computed layout ──
+    private val panelLeft get() = width / 2 - panelWidth / 2
+    private val panelRight get() = width / 2 + panelWidth / 2
+    private val contentLeft get() = width / 2 - buttonWidth / 2
+    private val centerX get() = width / 2
+
+    override fun init() {
+        // Determine initial mode
+        val session = ClientSessionStore.load()
+        val authState = AuthWorkflowManager.currentState()
+        mode = resolveMode(session, authState)
+        catalog = rebuildCatalog()
+
+        val btnY = height / 2 + 20
+
+        // ── LOGIN mode widgets ──
+        prevHostButton = addDrawableChild(
+            ButtonWidget.builder(Text.literal("◀")) { moveSelection(-1) }
+                .dimensions(contentLeft, btnY - 56, 20, buttonHeight)
+                .build(),
+        )
+        nextHostButton = addDrawableChild(
+            ButtonWidget.builder(Text.literal("▶")) { moveSelection(1) }
+                .dimensions(contentLeft + buttonWidth - 20, btnY - 56, 20, buttonHeight)
+                .build(),
+        )
+        customHostField = TextFieldWidget(
             textRenderer,
-            layout.left,
-            layout.formTop + 66,
-            layout.fieldWidth,
-            20,
-            Text.literal("Auth host URL"),
+            contentLeft,
+            btnY - 30,
+            buttonWidth,
+            buttonHeight,
+            Text.literal("URL auth-host"),
         ).apply {
             text = workingConfig.customAuthServerUrl
             setMaxLength(256)
+            setChangedListener { value ->
+                workingConfig = workingConfig.copy(customAuthServerUrl = value)
+                if (selectedEntry()?.id == ClientAuthConfig.CUSTOM_HOST_ID) {
+                    catalog = rebuildCatalog()
+                }
+            }
         }
-        addDrawableChild(customAuthServerField)
+        addDrawableChild(customHostField)
 
-        authServerButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal(serverButtonLabel())) {
-                cycleAuthServer()
-            }.dimensions(layout.left, layout.formTop + 36, layout.fieldWidth, 20).build(),
-        )
-
-        startLoginButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Продолжить вход")) {
-                saveWorkingConfig()
-                forceHostSelection = false
+        loginButton = addDrawableChild(
+            ButtonWidget.builder(Text.literal("Войти через Ely.by")) {
+                saveConfig()
                 AuthWorkflowManager.startBrowserLogin()
-                updateStage(ElyAuthStage.WAITING)
-            }.dimensions(layout.left, layout.formTop + 100, layout.fieldWidth, 20).build(),
+                mode = Mode.POLLING
+                refreshWidgets()
+            }.dimensions(contentLeft, btnY, buttonWidth, 24).build(),
         )
 
-        useLatestSessionButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Подтянуть последнюю сессию")) {
-                saveWorkingConfig()
-                forceHostSelection = false
-                AuthWorkflowManager.syncLatestSessionFromAuthHost()
-                updateStage(determineStage())
-            }.dimensions(layout.left, layout.formTop + 126, layout.fieldWidth, 20).build(),
-        )
-
-        hostBackButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Назад в меню")) {
-                AuthWorkflowManager.resetUiState()
-                saveWorkingConfig()
-                close()
-            }.dimensions(layout.left, layout.formTop + 152, layout.fieldWidth, 20).build(),
-        )
-
-        waitingRetryButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Открыть браузер ещё раз")) {
-                saveWorkingConfig()
-                AuthWorkflowManager.startBrowserLogin()
-            }.dimensions(layout.left, layout.formTop + 116, layout.fieldWidth, 20).build(),
-        )
-
-        waitingCancelButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Отменить")) {
+        // ── POLLING mode widgets ──
+        cancelButton = addDrawableChild(
+            ButtonWidget.builder(Text.literal("Отмена")) {
                 AuthWorkflowManager.cancelCurrentAttempt()
-                forceHostSelection = true
-                updateStage(ElyAuthStage.HOST_SELECT)
-            }.dimensions(layout.left, layout.formTop + 142, layout.fieldWidth, 20).build(),
+                mode = Mode.LOGIN
+                refreshWidgets()
+            }.dimensions(contentLeft, btnY + 30, buttonWidth, buttonHeight).build(),
         )
 
-        successMenuButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("В главное меню")) {
-                AuthWorkflowManager.resetUiState("Локальная Ely-сессия готова.")
-                close()
-            }.dimensions(layout.left, layout.formTop + 150, 108, 20).build(),
-        )
-
-        successRetryButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Войти ещё раз")) {
-                saveWorkingConfig()
-                forceHostSelection = false
-                AuthWorkflowManager.startBrowserLogin()
-                updateStage(ElyAuthStage.WAITING)
-            }.dimensions(layout.left + 112, layout.formTop + 150, 108, 20).build(),
-        )
-
-        successHostButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Сменить auth-host")) {
-                forceHostSelection = true
-                AuthWorkflowManager.resetUiState("Можно выбрать другой auth-host.")
-                updateStage(ElyAuthStage.HOST_SELECT)
-            }.dimensions(layout.left, layout.formTop + 176, layout.fieldWidth, 20).build(),
-        )
-
-        errorRetryButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Попробовать ещё раз")) {
-                saveWorkingConfig()
-                forceHostSelection = false
-                AuthWorkflowManager.startBrowserLogin()
-                updateStage(ElyAuthStage.WAITING)
-            }.dimensions(layout.left, layout.formTop + 132, layout.fieldWidth, 20).build(),
-        )
-
-        errorMenuButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("В главное меню")) {
+        // ── ERROR mode widgets ──
+        retryButton = addDrawableChild(
+            ButtonWidget.builder(Text.literal("Попробовать снова")) {
                 AuthWorkflowManager.resetUiState()
+                mode = Mode.LOGIN
+                refreshWidgets()
+            }.dimensions(contentLeft, btnY + 20, buttonWidth, buttonHeight).build(),
+        )
+
+        // ── SUCCESS mode widgets ──
+        logoutButton = addDrawableChild(
+            ButtonWidget.builder(Text.literal("Выйти")) {
+                AuthWorkflowManager.clearSession()
+                clearPreviewTexture()
+                mode = Mode.LOGIN
+                refreshWidgets()
+            }.dimensions(contentLeft, btnY + 50, smallButtonWidth, buttonHeight).build(),
+        )
+        doneButton = addDrawableChild(
+            ButtonWidget.builder(Text.literal("Готово")) {
+                saveConfig()
                 close()
-            }.dimensions(layout.left, layout.formTop + 158, 108, 20).build(),
+            }.dimensions(contentLeft + buttonWidth - smallButtonWidth, btnY + 50, smallButtonWidth, buttonHeight).build(),
         )
 
-        errorHostButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Сменить host")) {
-                forceHostSelection = true
-                AuthWorkflowManager.resetUiState("Выберите другой auth-host.")
-                updateStage(ElyAuthStage.HOST_SELECT)
-            }.dimensions(layout.left + 112, layout.formTop + 158, 108, 20).build(),
-        )
-
-        playerPreviewWidget = addDrawableChild(
+        skinWidget = addDrawableChild(
             PlayerSkinWidget(
                 72,
                 90,
@@ -178,19 +177,45 @@ class ElyAuthScreen(
             ),
         )
 
-        applyStageUi()
+        // ── Always visible ──
+        closeButton = addDrawableChild(
+            ButtonWidget.builder(Text.literal("Закрыть")) {
+                saveConfig()
+                close()
+            }.dimensions(contentLeft, btnY + 80, buttonWidth, buttonHeight).build(),
+        )
+
+        refreshWidgets()
     }
 
     override fun tick() {
-        pollPreviewTexture()
-        val desiredStage = determineStage()
-        if (desiredStage != stage) {
-            updateStage(desiredStage)
+        val authState = AuthWorkflowManager.currentState()
+        val session = ClientSessionStore.load()
+
+        // Auto-transition based on auth state
+        when {
+            authState.status == AuthFlowStatus.SUCCESS || session.hasUsableAuthSession() -> {
+                if (mode != Mode.SUCCESS) {
+                    mode = Mode.SUCCESS
+                    refreshWidgets()
+                }
+            }
+            authState.status == AuthFlowStatus.ERROR && mode == Mode.POLLING -> {
+                errorMessage = authState.message
+                mode = Mode.ERROR
+                refreshWidgets()
+            }
+            authState.status == AuthFlowStatus.POLLING && mode == Mode.LOGIN -> {
+                mode = Mode.POLLING
+                refreshWidgets()
+            }
         }
+
+        pollPreviewTexture()
     }
 
     override fun close() {
-        saveWorkingConfig()
+        saveConfig()
         client?.setScreen(parent)
     }
 
@@ -198,301 +223,279 @@ class ElyAuthScreen(
         clearPreviewTexture()
     }
 
+    // ══════════════════════════════════════════
+    //  RENDER
+    // ══════════════════════════════════════════
+
     override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
-        val layout = layout()
-        val session = ClientSessionStore.load()
-        val authState = AuthWorkflowManager.currentState()
+        // Dark gradient background
+        context.fillGradient(0, 0, width, height, 0xF0101820.toInt(), 0xF0180E1A.toInt())
 
-        context.fillGradient(0, 0, width, height, 0xF010191C.toInt(), 0xF0181118.toInt())
-        context.fill(0, 0, width, 30, 0xCC0A2B29.toInt())
+        // Main panel with mode-specific colors
+        val panelTop = height / 2 - 90
+        val panelBottom = height / 2 + 120
+        val (panelFill, panelBorder) = when (mode) {
+            Mode.LOGIN -> Pair(0xD0152428.toInt(), 0xFF2D8A7B.toInt())
+            Mode.POLLING -> Pair(0xD0152838.toInt(), 0xFF4A9ED9.toInt())
+            Mode.SUCCESS -> Pair(0xD0153028.toInt(), 0xFF3DA57B.toInt())
+            Mode.ERROR -> Pair(0xD02A1518.toInt(), 0xFFA54040.toInt())
+        }
+        drawPanel(context, panelLeft - 10, panelTop - 10, panelRight + 10, panelBottom + 10, panelFill, panelBorder)
 
-        drawPanel(
-            context,
-            layout.panelLeft,
-            layout.panelTop,
-            layout.panelRight,
-            layout.panelBottom,
-            0xCC142126.toInt(),
-            0xFF1F5B56.toInt(),
-        )
+        // Title
+        context.drawCenteredTextWithShadow(textRenderer, title, centerX, panelTop, COLOR_TITLE)
 
-        context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 18, 0xF2FFF8.toInt())
+        when (mode) {
+            Mode.LOGIN -> renderLogin(context, panelTop)
+            Mode.POLLING -> renderPolling(context, panelTop)
+            Mode.SUCCESS -> renderSuccess(context, panelTop)
+            Mode.ERROR -> renderError(context, panelTop)
+        }
+
+        super.render(context, mouseX, mouseY, delta)
+    }
+
+    private fun renderLogin(context: DrawContext, panelTop: Int) {
+        // Subtitle
         context.drawCenteredTextWithShadow(
             textRenderer,
-            Text.literal(stage.subtitle),
-            width / 2,
-            32,
-            0x86D9C4.toInt(),
+            Text.literal("Играй на серверах с Ely.by"),
+            centerX,
+            panelTop + 14,
+            COLOR_SUBTITLE,
         )
 
-        renderStageHeader(context, layout, stage)
-
-        when (stage) {
-            ElyAuthStage.HOST_SELECT -> renderHostStage(context, layout, session)
-            ElyAuthStage.WAITING -> renderWaitingStage(context, layout, authState)
-            ElyAuthStage.SUCCESS -> renderSuccessStage(context, layout, session)
-            ElyAuthStage.ERROR -> renderErrorStage(context, layout, authState)
+        // Host info
+        val selected = selectedEntry()
+        val hostName = selected?.displayName ?: "не выбран"
+        val hostUrl = selected?.baseUrl ?: "-"
+        val trustText = when (selected?.trustState) {
+            AuthHostTrustState.TRUSTED -> "✅ доверенный"
+            AuthHostTrustState.PENDING -> "⚠ требует подтверждения"
+            AuthHostTrustState.BLOCKED -> "❌ заблокирован"
+            null -> "-"
         }
 
-        if (customAuthServerField.visible) {
-            customAuthServerField.render(context, mouseX, mouseY, delta)
-        }
+        val infoY = panelTop + 36
+        context.drawCenteredTextWithShadow(textRenderer, Text.literal("Сервер: $hostName"), centerX, infoY, COLOR_TEXT)
+        context.drawCenteredTextWithShadow(textRenderer, Text.literal(hostUrl), centerX, infoY + 12, COLOR_DIM)
+        context.drawCenteredTextWithShadow(textRenderer, Text.literal(trustText), centerX, infoY + 24, trustColor(selected))
 
-        listOf(
-            authServerButton,
-            startLoginButton,
-            useLatestSessionButton,
-            hostBackButton,
-            waitingRetryButton,
-            waitingCancelButton,
-            successMenuButton,
-            successRetryButton,
-            successHostButton,
-            errorRetryButton,
-            errorMenuButton,
-            errorHostButton,
-            playerPreviewWidget,
-        ).filter { it.visible }
-            .forEach { it.render(context, mouseX, mouseY, delta) }
-    }
-
-    private fun renderStageHeader(context: DrawContext, layout: ElyAuthLayout, stage: ElyAuthStage) {
-        context.drawTextWithShadow(
-            textRenderer,
-            Text.literal(stage.title),
-            layout.left,
-            layout.panelTop + 12,
-            0x7EE7C8.toInt(),
-        )
-    }
-
-    private fun renderHostStage(context: DrawContext, layout: ElyAuthLayout, session: ClientSessionState) {
-        context.drawTextWithShadow(
-            textRenderer,
-            Text.literal("Шаг 1. Выберите auth-host"),
-            layout.left,
-            layout.formTop + 8,
-            0xF2FFF8.toInt(),
-        )
-        context.drawTextWithShadow(
-            textRenderer,
-            Text.literal("Сначала выбирается сервер авторизации, затем открывается браузер Ely.by."),
-            layout.left,
-            layout.formTop + 20,
-            0x9AC4BC.toInt(),
-        )
-
-        context.drawTextWithShadow(
-            textRenderer,
-            Text.literal("Источник авторизации"),
-            layout.left,
-            layout.formTop + 44,
-            0x7EE7C8.toInt(),
-        )
-        context.drawTextWithShadow(
-            textRenderer,
-            Text.literal("Custom URL"),
-            layout.left,
-            layout.formTop + 74,
-            if (workingConfig.selectedAuthServerId == AuthServerPresets.CUSTOM) 0xF2FFF8.toInt() else 0x6A8C84.toInt(),
-        )
-
-        val hintLines = mutableListOf(
-            "Выбранный host: ${AuthServerPresets.byId(workingConfig.selectedAuthServerId).label}",
-            "URL: ${workingConfig.resolvedAuthServerBaseUrl()}",
-            "Ник клиента: ${currentClientUsername()}",
-            "UUID клиента: ${currentClientUuid()}",
-        )
-        if (session.hasUsableAuthSession()) {
-            hintLines += "Ely.by ник: ${session.elyUsername ?: "неизвестно"}"
-            hintLines += "Ely.by UUID: ${session.elyUuid ?: "-"}"
+        // If host needs trust, change login button
+        val actions = AuthHostActionPolicy.forEntry(selected)
+        if (actions.canTrust && !actions.canStartAuth) {
+            loginButton.message = Text.literal("Доверять и войти")
+            loginButton.active = true
+        } else if (actions.canStartAuth) {
+            loginButton.message = Text.literal("Войти через Ely.by")
+            loginButton.active = true
         } else {
-            hintLines += "Сохранённой Ely-сессии пока нет."
-        }
-
-        hintLines.forEachIndexed { index, line ->
-            context.drawTextWithShadow(
-                textRenderer,
-                Text.literal(line),
-                layout.left,
-                layout.infoTop + index * 12,
-                0xD8EFE7.toInt(),
-            )
+            loginButton.message = Text.literal("Выберите рабочий хост")
+            loginButton.active = false
         }
     }
 
-    private fun renderWaitingStage(context: DrawContext, layout: ElyAuthLayout, authState: AuthFlowState) {
-        drawInfoCard(
-            context,
-            layout.left,
-            layout.formTop + 44,
-            layout.right,
-            layout.formTop + 106,
-            0xCC203342.toInt(),
-            0xFF8ED7FF.toInt(),
-        )
-
-        context.drawTextWithShadow(
+    private fun renderPolling(context: DrawContext, panelTop: Int) {
+        context.drawCenteredTextWithShadow(
             textRenderer,
-            Text.literal("Шаг 2. Завершите вход в браузере"),
-            layout.left + 10,
-            layout.formTop + 52,
-            0xFF8ED7FF.toInt(),
+            Text.literal("Ожидаю авторизацию..."),
+            centerX,
+            panelTop + 14,
+            COLOR_ACCENT,
         )
 
-        wrapText(
-            "После успешного callback мод сам сохранит локальную Ely-сессию и покажет итоговый экран.",
-            layout.fieldWidth - 20,
-        ).forEachIndexed { index, line ->
-            context.drawTextWithShadow(
-                textRenderer,
-                Text.literal(line),
-                layout.left + 10,
-                layout.formTop + 66 + index * 10,
-                0xE3F6FF.toInt(),
-            )
-        }
+        // Animated dots
+        val dots = ".".repeat(((System.currentTimeMillis() / 500) % 4).toInt())
+        context.drawCenteredTextWithShadow(
+            textRenderer,
+            Text.literal("Завершите вход в браузере$dots"),
+            centerX,
+            panelTop + 36,
+            COLOR_DIM,
+        )
 
-        renderStatusStrip(context, layout, authState)
+        val authState = AuthWorkflowManager.currentState()
+        context.drawCenteredTextWithShadow(
+            textRenderer,
+            Text.literal(authState.message),
+            centerX,
+            panelTop + 56,
+            COLOR_SUBTITLE,
+        )
     }
 
-    private fun renderSuccessStage(context: DrawContext, layout: ElyAuthLayout, session: ClientSessionState) {
+    private fun renderSuccess(context: DrawContext, panelTop: Int) {
+        val session = ClientSessionStore.load()
         ensurePreviewRequested(session)
 
-        val successLeft = width / 2 - 240
-        val successRight = width / 2 + 240
-        val summaryTop = layout.formTop + 40
-        val summaryBottom = summaryTop + 116
-        val detailsTop = summaryBottom + 8
-        val detailsBottom = detailsTop + 64
-
-        drawInfoCard(
-            context,
-            successLeft,
-            summaryTop,
-            successRight,
-            summaryBottom,
-            0xCC163926.toInt(),
-            0xFF7CFF9A.toInt(),
+        context.drawCenteredTextWithShadow(
+            textRenderer,
+            Text.literal("Вы авторизованы ✅"),
+            centerX,
+            panelTop + 14,
+            COLOR_SUCCESS,
         )
 
-        drawInfoCard(
-            context,
-            successLeft,
-            detailsTop,
-            successRight,
-            detailsBottom,
-            0xCC12252A.toInt(),
-            0xFF3B8C85.toInt(),
-        )
+        // Skin preview (left side)
+        val skinLeft = contentLeft
+        val skinTop = panelTop + 34
+        skinWidget.visible = true
+        skinWidget.setX(skinLeft + 4)
+        skinWidget.setY(skinTop + 4)
+        skinWidget.setDimensions(64, 80)
+        drawMiniPanel(context, skinLeft, skinTop, skinLeft + 72, skinTop + 88)
 
-        val previewLeft = successLeft + 14
-        val previewTop = summaryTop + 12
-        val previewSize = 92
-        drawInfoCard(
-            context,
-            previewLeft,
-            previewTop,
-            previewLeft + previewSize,
-            previewTop + previewSize,
-            0xCC10272B.toInt(),
-            0xFF5DD9C9.toInt(),
-        )
-        playerPreviewWidget.setX(previewLeft)
-        playerPreviewWidget.setY(previewTop)
-        playerPreviewWidget.setDimensions(previewSize, previewSize)
-
+        // Info (right side)
+        val infoLeft = skinLeft + 84
+        val infoY = skinTop + 6
         val username = session.elyUsername ?: "неизвестно"
         val uuid = session.elyUuid ?: "-"
-        val clientUsername = currentClientUsername()
-        val activeSessionUuid = MinecraftClient.getInstance().session?.uuidOrNull?.toString() ?: "-"
-        val uuidMatches = uuid == activeSessionUuid
-        val sessionState = if (session.hasUsableAuthSession()) "Локальная Ely-сессия сохранена" else "Локальная Ely-сессия не активна"
-        val infoLeft = previewLeft + previewSize + 18
-        context.drawTextWithShadow(textRenderer, Text.literal("Авторизация успешна"), infoLeft, summaryTop + 10, 0xFF7CFF9A.toInt())
-        context.drawTextWithShadow(textRenderer, Text.literal("Ely.by ник: $username"), infoLeft, summaryTop + 28, 0xF2FFF8.toInt())
-        context.drawTextWithShadow(textRenderer, Text.literal("Ник клиента: $clientUsername"), infoLeft, summaryTop + 42, 0xF2FFF8.toInt())
-        context.drawTextWithShadow(
-            textRenderer,
-            Text.literal("UUID подменён: ${if (uuidMatches) "да" else "нет"}"),
-            infoLeft,
-            summaryTop + 56,
-            if (uuidMatches) 0xC7FFD5.toInt() else 0xFFD0D0.toInt(),
-        )
-        context.drawTextWithShadow(
-            textRenderer,
-            Text.literal("Теперь можно играть с локально сохранённой Ely-сессией."),
-            infoLeft,
-            summaryTop + 76,
-            0xBDEBD1.toInt(),
-        )
+        val host = selectedEntry()?.displayName ?: "horni.cc"
 
-        context.drawTextWithShadow(textRenderer, Text.literal("Ely UUID"), successLeft + 12, detailsTop + 10, 0x8FD9CE.toInt())
-        context.drawTextWithShadow(textRenderer, Text.literal(uuid), successLeft + 12, detailsTop + 24, 0xF2FFF8.toInt())
-        context.drawTextWithShadow(textRenderer, Text.literal("UUID клиента"), successLeft + 12, detailsTop + 40, 0x8FD9CE.toInt())
-        context.drawTextWithShadow(textRenderer, Text.literal(activeSessionUuid), successLeft + 12, detailsTop + 54, 0xF2FFF8.toInt())
+        context.drawTextWithShadow(textRenderer, Text.literal("Ник: $username"), infoLeft, infoY, COLOR_TEXT)
+        context.drawTextWithShadow(textRenderer, Text.literal("UUID: ${uuid.take(13)}..."), infoLeft, infoY + 14, COLOR_DIM)
+        context.drawTextWithShadow(textRenderer, Text.literal("Хост: $host"), infoLeft, infoY + 28, COLOR_DIM)
+        context.drawTextWithShadow(textRenderer, Text.literal("Сессия: активна"), infoLeft, infoY + 42, COLOR_SUCCESS)
+
+        // Restart hint
+        context.drawCenteredTextWithShadow(
+            textRenderer,
+            Text.literal("⚠ Перезапустите клиент для"),
+            centerX,
+            panelTop + 132,
+            COLOR_WARNING,
+        )
+        context.drawCenteredTextWithShadow(
+            textRenderer,
+            Text.literal("применения Ely-сессии"),
+            centerX,
+            panelTop + 144,
+            COLOR_WARNING,
+        )
     }
 
-    private fun renderErrorStage(context: DrawContext, layout: ElyAuthLayout, authState: AuthFlowState) {
-        drawInfoCard(
-            context,
-            layout.left,
-            layout.formTop + 44,
-            layout.right,
-            layout.formTop + 122,
-            0xCC4A1E24.toInt(),
-            0xFFFFA0A0.toInt(),
-        )
-        context.drawTextWithShadow(
+    private fun renderError(context: DrawContext, panelTop: Int) {
+        context.drawCenteredTextWithShadow(
             textRenderer,
-            Text.literal("Авторизация не удалась"),
-            layout.left + 10,
-            layout.formTop + 52,
-            0xFFFFA0A0.toInt(),
+            Text.literal("Ошибка авторизации ❌"),
+            centerX,
+            panelTop + 14,
+            COLOR_ERROR,
         )
-        wrapText(authState.message, layout.fieldWidth - 20).take(4).forEachIndexed { index, line ->
-            context.drawTextWithShadow(
+
+        // Wrap error message
+        val maxWidth = buttonWidth - 10
+        val wrapped = wrapText(errorMessage, maxWidth)
+        wrapped.take(4).forEachIndexed { index, line ->
+            context.drawCenteredTextWithShadow(
                 textRenderer,
                 Text.literal(line),
-                layout.left + 10,
-                layout.formTop + 66 + index * 10,
-                0xFFE6E6.toInt(),
+                centerX,
+                panelTop + 38 + index * 12,
+                COLOR_DIM,
             )
         }
     }
 
-    private fun renderStatusStrip(context: DrawContext, layout: ElyAuthLayout, authState: AuthFlowState) {
-        val fillColor = when (authState.status) {
-            AuthFlowStatus.SUCCESS -> 0xCC163926.toInt()
-            AuthFlowStatus.ERROR -> 0xCC4A1E24.toInt()
-            AuthFlowStatus.POLLING, AuthFlowStatus.OPENING_BROWSER -> 0xCC203342.toInt()
-            AuthFlowStatus.IDLE -> 0xCC1E2830.toInt()
-        }
-        val accentColor = when (authState.status) {
-            AuthFlowStatus.SUCCESS -> 0xFF7CFF9A.toInt()
-            AuthFlowStatus.ERROR -> 0xFFFFA0A0.toInt()
-            AuthFlowStatus.POLLING, AuthFlowStatus.OPENING_BROWSER -> 0xFF8ED7FF.toInt()
-            AuthFlowStatus.IDLE -> 0xFFD7E6EE.toInt()
-        }
+    // ══════════════════════════════════════════
+    //  WIDGET VISIBILITY
+    // ══════════════════════════════════════════
 
-        drawInfoCard(context, layout.left, layout.infoTop, layout.right, layout.infoTop + 42, fillColor, accentColor)
-        context.drawTextWithShadow(
-            textRenderer,
-            Text.literal("Статус: ${statusLabel(authState.status)}"),
-            layout.left + 10,
-            layout.infoTop + 8,
-            accentColor,
+    private fun refreshWidgets() {
+        val isLogin = mode == Mode.LOGIN
+        val isPolling = mode == Mode.POLLING
+        val isSuccess = mode == Mode.SUCCESS
+        val isError = mode == Mode.ERROR
+        val isCustomHost = selectedEntry()?.id == ClientAuthConfig.CUSTOM_HOST_ID
+
+        // LOGIN
+        loginButton.visible = isLogin
+        prevHostButton.visible = isLogin && catalog.entries.size > 1
+        prevHostButton.active = isLogin && catalog.entries.size > 1
+        nextHostButton.visible = isLogin && catalog.entries.size > 1
+        nextHostButton.active = isLogin && catalog.entries.size > 1
+        customHostField.visible = isLogin && isCustomHost
+        customHostField.active = isLogin && isCustomHost
+        customHostField.setEditable(isLogin && isCustomHost)
+
+        // POLLING
+        cancelButton.visible = isPolling
+
+        // SUCCESS
+        logoutButton.visible = isSuccess
+        doneButton.visible = isSuccess
+        skinWidget.visible = isSuccess
+
+        // ERROR
+        retryButton.visible = isError
+
+        // Close button: hide on SUCCESS (use "Готово" instead)
+        closeButton.visible = !isSuccess
+    }
+
+    // ══════════════════════════════════════════
+    //  HOST SELECTION
+    // ══════════════════════════════════════════
+
+    private fun moveSelection(delta: Int) {
+        if (catalog.entries.isEmpty()) return
+        selectedIndex = (selectedIndex + delta).floorMod(catalog.entries.size)
+        syncSelectionIntoConfig()
+        refreshWidgets()
+    }
+
+    private fun selectedEntry(): AuthHostEntry? = catalog.entries.getOrNull(selectedIndex)
+
+    private fun rebuildCatalog(): AuthHostCatalog {
+        val config = ClientAuthConfig(
+            selectedHostId = workingConfig.selectedAuthServerId,
+            customHostUrl = workingConfig.customAuthServerUrl,
+            rememberedHosts = workingConfig.rememberedHosts,
+            discoveryMode = workingConfig.serverDiscoveryMode,
+            preferredLoginMode = workingConfig.preferredLoginMode,
         )
-        wrapText(authState.message, layout.fieldWidth - 20).take(2).forEachIndexed { index, line ->
-            context.drawTextWithShadow(
-                textRenderer,
-                Text.literal(line),
-                layout.left + 10,
-                layout.infoTop + 20 + index * 10,
-                0xE3F6FF.toInt(),
+        val built = AuthHostCatalog.build(config, emptyList())
+        selectedIndex = built.entries.indexOfFirst { it.id == workingConfig.selectedAuthServerId }
+            .takeIf { it >= 0 } ?: 0
+        return built
+    }
+
+    private fun syncSelectionIntoConfig() {
+        selectedEntry()?.let { selected ->
+            workingConfig = workingConfig.copy(
+                selectedAuthServerId = selected.id,
+                relayBaseUrl = if (selected.id == ClientAuthConfig.CUSTOM_HOST_ID) {
+                    if (this::customHostField.isInitialized) customHostField.text else workingConfig.customAuthServerUrl
+                } else {
+                    selected.baseUrl
+                },
             )
         }
     }
+
+    private fun saveConfig() {
+        if (this::customHostField.isInitialized) {
+            workingConfig = workingConfig.copy(customAuthServerUrl = customHostField.text)
+        }
+        syncSelectionIntoConfig()
+        ModConfigStore.save(workingConfig)
+    }
+
+    private fun resolveMode(session: ClientSessionState, authState: AuthFlowState): Mode {
+        return when {
+            authState.status == AuthFlowStatus.SUCCESS || session.hasUsableAuthSession() -> Mode.SUCCESS
+            authState.status == AuthFlowStatus.ERROR -> {
+                errorMessage = authState.message
+                Mode.ERROR
+            }
+            authState.status == AuthFlowStatus.POLLING || authState.status == AuthFlowStatus.OPENING_BROWSER -> Mode.POLLING
+            else -> Mode.LOGIN
+        }
+    }
+
+    // ══════════════════════════════════════════
+    //  SKIN PREVIEW
+    // ══════════════════════════════════════════
 
     private fun currentSkinTextures(): SkinTextures {
         val session = ClientSessionStore.load()
@@ -501,7 +504,6 @@ class ElyAuthScreen(
             return SkinTextures.create(
                 object : AssetInfo.TextureAsset {
                     override fun id(): Identifier = textureId
-
                     override fun texturePath(): Identifier = textureId
                 },
                 null,
@@ -509,7 +511,6 @@ class ElyAuthScreen(
                 extractSkinModel(session.elyTexturesValue),
             )
         }
-
         val uuid = session.elyUuid
             ?.let { rawUuid -> runCatching { UUID.fromString(rawUuid) }.getOrNull() }
             ?: MinecraftClient.getInstance().session?.uuidOrNull
@@ -517,203 +518,20 @@ class ElyAuthScreen(
         return DefaultSkinHelper.getSkinTextures(uuid)
     }
 
-    private fun drawPanel(context: DrawContext, left: Int, top: Int, right: Int, bottom: Int, fillColor: Int, borderColor: Int) {
-        context.fill(left, top, right, bottom, fillColor)
-        context.fill(left, top, right, top + 1, borderColor)
-        context.fill(left, bottom - 1, right, bottom, borderColor)
-        context.fill(left, top, left + 1, bottom, borderColor)
-        context.fill(right - 1, top, right, bottom, borderColor)
-    }
-
-    private fun drawInfoCard(context: DrawContext, left: Int, top: Int, right: Int, bottom: Int, fillColor: Int, borderColor: Int) {
-        drawPanel(context, left, top, right, bottom, fillColor, borderColor)
-    }
-
-    private fun determineStage(): ElyAuthStage {
-        val authState = AuthWorkflowManager.currentState()
-        val session = ClientSessionStore.load()
-        return when {
-            authState.status == AuthFlowStatus.OPENING_BROWSER || authState.status == AuthFlowStatus.POLLING -> ElyAuthStage.WAITING
-            forceHostSelection -> ElyAuthStage.HOST_SELECT
-            authState.status == AuthFlowStatus.ERROR -> ElyAuthStage.ERROR
-            authState.status == AuthFlowStatus.SUCCESS || session.hasUsableAuthSession() -> ElyAuthStage.SUCCESS
-            else -> ElyAuthStage.HOST_SELECT
-        }
-    }
-
-    private fun updateStage(newStage: ElyAuthStage) {
-        stage = newStage
-        applyStageUi()
-    }
-
-    private fun applyStageUi() {
-        val showHostSelect = stage == ElyAuthStage.HOST_SELECT
-        val showWaiting = stage == ElyAuthStage.WAITING
-        val showSuccess = stage == ElyAuthStage.SUCCESS
-        val showError = stage == ElyAuthStage.ERROR
-
-        authServerButton.visible = showHostSelect
-        authServerButton.active = showHostSelect
-        customAuthServerField.visible = showHostSelect
-        customAuthServerField.active = showHostSelect
-        customAuthServerField.setEditable(showHostSelect && workingConfig.selectedAuthServerId == AuthServerPresets.CUSTOM)
-        startLoginButton.visible = showHostSelect
-        startLoginButton.active = showHostSelect
-        useLatestSessionButton.visible = showHostSelect
-        useLatestSessionButton.active = showHostSelect
-        hostBackButton.visible = showHostSelect
-        hostBackButton.active = showHostSelect
-
-        waitingRetryButton.visible = showWaiting
-        waitingRetryButton.active = showWaiting
-        waitingCancelButton.visible = showWaiting
-        waitingCancelButton.active = showWaiting
-
-        successMenuButton.visible = showSuccess
-        successMenuButton.active = showSuccess
-        successRetryButton.visible = showSuccess
-        successRetryButton.active = showSuccess
-        successHostButton.visible = showSuccess
-        successHostButton.active = showSuccess
-        playerPreviewWidget.visible = showSuccess
-        playerPreviewWidget.active = showSuccess
-        if (showSuccess) {
-            val successLeft = width / 2 - 240
-            val successRight = width / 2 + 240
-            val buttonTop = layout().formTop + 230
-            successMenuButton.setX(successLeft)
-            successMenuButton.setY(buttonTop)
-            successRetryButton.setX(successLeft + 244)
-            successRetryButton.setY(buttonTop)
-            successHostButton.setX(successLeft)
-            successHostButton.setY(buttonTop + 26)
-            successHostButton.width = successRight - successLeft
-            playerPreviewWidget.setX(successLeft + 14)
-            playerPreviewWidget.setY(layout().formTop + 52)
-            playerPreviewWidget.setDimensions(92, 92)
-        }
-
-        errorRetryButton.visible = showError
-        errorRetryButton.active = showError
-        errorMenuButton.visible = showError
-        errorMenuButton.active = showError
-        errorHostButton.visible = showError
-        errorHostButton.active = showError
-    }
-
-    private fun cycleAuthServer() {
-        val currentIndex = AuthServerPresets.ALL.indexOfFirst { it.id == workingConfig.selectedAuthServerId }
-        val nextPreset = AuthServerPresets.ALL[(currentIndex + 1).mod(AuthServerPresets.ALL.size)]
-        workingConfig = workingConfig.copy(
-            selectedAuthServerId = nextPreset.id,
-            relayBaseUrl = nextPreset.defaultUrl ?: customAuthServerField.text.ifBlank { workingConfig.relayBaseUrl },
-        )
-        customAuthServerField.setEditable(workingConfig.selectedAuthServerId == AuthServerPresets.CUSTOM)
-        authServerButton.message = Text.literal(serverButtonLabel())
-    }
-
-    private fun saveWorkingConfig() {
-        val currentCustomUrl = customAuthServerField.text.ifBlank { workingConfig.customAuthServerUrl }
-        val resolvedUrl = when (workingConfig.selectedAuthServerId) {
-            AuthServerPresets.CUSTOM -> currentCustomUrl
-            else -> AuthServerPresets.byId(workingConfig.selectedAuthServerId).defaultUrl ?: currentCustomUrl
-        }
-
-        workingConfig = workingConfig.copy(
-            relayBaseUrl = resolvedUrl,
-            customAuthServerUrl = currentCustomUrl,
-        )
-        ModConfigStore.save(workingConfig)
-    }
-
-    private fun serverButtonLabel(): String {
-        return "Auth-host: " + AuthServerPresets.byId(workingConfig.selectedAuthServerId).label
-    }
-
-    private fun currentClientUsername(): String {
-        return MinecraftClient.getInstance().session?.username ?: "неизвестно"
-    }
-
-    private fun currentClientUuid(): String {
-        return MinecraftClient.getInstance().session?.uuidOrNull?.toString() ?: "-"
-    }
-
-    private fun statusLabel(status: AuthFlowStatus): String {
-        return when (status) {
-            AuthFlowStatus.IDLE -> "Готов"
-            AuthFlowStatus.OPENING_BROWSER -> "Открываю браузер"
-            AuthFlowStatus.POLLING -> "Ожидание callback-а"
-            AuthFlowStatus.SUCCESS -> "Успешно"
-            AuthFlowStatus.ERROR -> "Ошибка"
-        }
-    }
-
-    private fun wrapText(text: String, maxWidth: Int): List<String> {
-        if (text.isBlank()) {
-            return listOf("")
-        }
-
-        val words = text.split(Regex("\\s+"))
-        val lines = mutableListOf<String>()
-        var currentLine = ""
-
-        for (word in words) {
-            val candidate = if (currentLine.isBlank()) word else "$currentLine $word"
-            if (textRenderer.getWidth(candidate) <= maxWidth) {
-                currentLine = candidate
-            } else {
-                if (currentLine.isNotBlank()) {
-                    lines += currentLine
-                }
-                currentLine = word
-            }
-        }
-
-        if (currentLine.isNotBlank()) {
-            lines += currentLine
-        }
-
-        return lines.ifEmpty { listOf(text) }
-    }
-
-    private fun layout(): ElyAuthLayout {
-        val fieldWidth = 220
-        val left = width / 2 - fieldWidth / 2
-        val panelTop = 40
-        return ElyAuthLayout(
-            left = left,
-            right = left + fieldWidth,
-            fieldWidth = fieldWidth,
-            panelLeft = left - 20,
-            panelRight = left + fieldWidth + 20,
-            panelTop = panelTop,
-            panelBottom = minOf(height - 18, panelTop + 252),
-            formTop = panelTop + 18,
-            infoTop = panelTop + 202,
-        )
-    }
-
     private fun ensurePreviewRequested(session: ClientSessionState) {
         val texturesValue = session.elyTexturesValue ?: return
-        if (texturesValue == previewSourceKey || previewFuture != null || previewTextureId != null) {
-            return
-        }
+        if (texturesValue == previewSourceKey || previewFuture != null || previewTextureId != null) return
 
         previewSourceKey = texturesValue
         val skinUrl = extractSkinUrl(texturesValue) ?: return
         previewFuture = CompletableFuture.supplyAsync {
-            runCatching {
-                URI.create(skinUrl).toURL().openStream().use(NativeImage::read)
-            }.getOrNull()
+            runCatching { URI.create(skinUrl).toURL().openStream().use(NativeImage::read) }.getOrNull()
         }
     }
 
     private fun pollPreviewTexture() {
         val future = previewFuture ?: return
-        if (!future.isDone) {
-            return
-        }
-
+        if (!future.isDone) return
         previewFuture = null
         val image = runCatching { future.get() }.getOrNull() ?: return
         val texture = NativeImageBackedTexture({ "ely-auth-preview" }, image)
@@ -732,14 +550,59 @@ class ElyAuthScreen(
         previewTextureId = null
     }
 
+    // ══════════════════════════════════════════
+    //  DRAWING HELPERS
+    // ══════════════════════════════════════════
+
+    private fun drawPanel(context: DrawContext, left: Int, top: Int, right: Int, bottom: Int, fillColor: Int = 0xD0152428.toInt(), borderColor: Int = COLOR_BORDER) {
+        context.fill(left, top, right, bottom, fillColor)
+        context.fill(left, top, right, top + 1, borderColor)
+        context.fill(left, bottom - 1, right, bottom, borderColor)
+        context.fill(left, top, left + 1, bottom, borderColor)
+        context.fill(right - 1, top, right, bottom, borderColor)
+    }
+
+    private fun drawMiniPanel(context: DrawContext, left: Int, top: Int, right: Int, bottom: Int) {
+        context.fill(left, top, right, bottom, 0xCC10272B.toInt())
+        context.fill(left, top, right, top + 1, 0xFF2A6B5E.toInt())
+        context.fill(left, bottom - 1, right, bottom, 0xFF2A6B5E.toInt())
+        context.fill(left, top, left + 1, bottom, 0xFF2A6B5E.toInt())
+        context.fill(right - 1, top, right, bottom, 0xFF2A6B5E.toInt())
+    }
+
+    private fun wrapText(text: String, maxWidth: Int): List<String> {
+        if (text.isBlank()) return listOf("")
+        val words = text.split(Regex("\\s+"))
+        val lines = mutableListOf<String>()
+        var current = ""
+        for (word in words) {
+            val candidate = if (current.isBlank()) word else "$current $word"
+            if (textRenderer.getWidth(candidate) <= maxWidth) {
+                current = candidate
+            } else {
+                if (current.isNotBlank()) lines += current
+                current = word
+            }
+        }
+        if (current.isNotBlank()) lines += current
+        return lines.ifEmpty { listOf(text) }
+    }
+
+    private fun trustColor(entry: AuthHostEntry?): Int {
+        return when (entry?.trustState) {
+            AuthHostTrustState.TRUSTED -> COLOR_SUCCESS
+            AuthHostTrustState.PENDING -> COLOR_WARNING
+            AuthHostTrustState.BLOCKED -> COLOR_ERROR
+            null -> COLOR_DIM
+        }
+    }
+
     private fun extractSkinModel(texturesValue: String?): PlayerSkinType {
         val decoded = texturesValue?.let {
             runCatching { String(Base64.getDecoder().decode(it), StandardCharsets.UTF_8) }.getOrNull()
         } ?: return PlayerSkinType.WIDE
         val metadata = Regex("\"metadata\"\\s*:\\s*\\{[^}]*\"model\"\\s*:\\s*\"([^\"]+)\"")
-            .find(decoded)
-            ?.groupValues
-            ?.getOrNull(1)
+            .find(decoded)?.groupValues?.getOrNull(1)
         return PlayerSkinType.byModelMetadata(metadata)
     }
 
@@ -747,43 +610,21 @@ class ElyAuthScreen(
         return runCatching {
             val decoded = String(Base64.getDecoder().decode(texturesValue), StandardCharsets.UTF_8)
             Regex(""""SKIN"\s*:\s*\{[^}]*"url"\s*:\s*"([^"]+)"""")
-                .find(decoded)
-                ?.groupValues
-                ?.getOrNull(1)
+                .find(decoded)?.groupValues?.getOrNull(1)
         }.getOrNull()
+    }
+
+    companion object {
+        private val COLOR_TITLE = 0xFFF2FFF8.toInt()
+        private val COLOR_SUBTITLE = 0xFF86D9C4.toInt()
+        private val COLOR_TEXT = 0xFFF2FFF8.toInt()
+        private val COLOR_DIM = 0xFFD8EFE7.toInt()
+        private val COLOR_ACCENT = 0xFF54E4B0.toInt()
+        private val COLOR_SUCCESS = 0xFF7CFF9A.toInt()
+        private val COLOR_WARNING = 0xFFFFE6A3.toInt()
+        private val COLOR_ERROR = 0xFFFFA0A0.toInt()
+        private val COLOR_BORDER = 0xFF2D8A7B.toInt()
     }
 }
 
-private enum class ElyAuthStage(
-    val title: String,
-    val subtitle: String,
-) {
-    HOST_SELECT(
-        title = "Выбор auth-host",
-        subtitle = "Сначала выберите, где будет проходить авторизация Ely.by",
-    ),
-    WAITING(
-        title = "Ожидание callback-а",
-        subtitle = "Браузер уже открыт, мод ждёт ответ от Ely.by и auth-host",
-    ),
-    SUCCESS(
-        title = "Авторизация завершена",
-        subtitle = "Ely-сессия сохранена локально и готова к использованию",
-    ),
-    ERROR(
-        title = "Ошибка авторизации",
-        subtitle = "Можно попробовать снова или выбрать другой auth-host",
-    ),
-}
-
-private data class ElyAuthLayout(
-    val left: Int,
-    val right: Int,
-    val fieldWidth: Int,
-    val panelLeft: Int,
-    val panelRight: Int,
-    val panelTop: Int,
-    val panelBottom: Int,
-    val formTop: Int,
-    val infoTop: Int,
-)
+private fun Int.floorMod(other: Int): Int = ((this % other) + other) % other

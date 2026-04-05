@@ -18,6 +18,5 @@ dependencyResolutionManagement {
 rootProject.name = "Ely4Everyone"
 
 include(":mod")
-include(":relay")
 include(":velocity-plugin")
 include(":paper-bridge")

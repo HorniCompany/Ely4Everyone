@@ -32,6 +32,12 @@ java {
     withSourcesJar()
 }
 
+sourceSets {
+    named("main") {
+        java.srcDir("../shared-auth/src/main/kotlin")
+    }
+}
+
 dependencies {
     minecraft("com.mojang:minecraft:$minecraftVersion")
     mappings("net.fabricmc:yarn:$yarnMappings:v2")
