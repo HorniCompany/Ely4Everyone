@@ -98,33 +98,7 @@ object LoginQueryResponder {
             return sessionState
         }
 
-        logger.info("Local Ely auth session is empty or expired. Trying to pull latest session from auth host.")
-        val latestSession: AuthPollResult = runCatching {
-            AuthHostClient.latestSession(sessionState.relayBaseUrl)
-        }.getOrElse { exception ->
-            logger.warn("Failed to pull latest Ely auth session from auth host.", exception)
-            return null
-        }
-
-        if (latestSession.status != "completed" ||
-            latestSession.authSessionToken.isNullOrBlank() ||
-            latestSession.username.isNullOrBlank() ||
-            latestSession.uuid.isNullOrBlank() ||
-            latestSession.expiresAtEpochSeconds == null
-        ) {
-            logger.info("Auth host did not return a usable latest Ely session. status={}", latestSession.status)
-            return null
-        }
-
-        val resolvedSession = ClientSessionState(
-            relayBaseUrl = sessionState.relayBaseUrl,
-            authSessionToken = latestSession.authSessionToken,
-            authSessionExpiresAt = Instant.ofEpochSecond(latestSession.expiresAtEpochSeconds),
-            elyUsername = latestSession.username,
-            elyUuid = latestSession.uuid,
-        )
-        ClientSessionStore.save(resolvedSession)
-        logger.info("Pulled latest Ely auth session for {} ({}) from auth host.", latestSession.username, latestSession.uuid)
-        return resolvedSession
+        logger.info("Local Ely auth session is empty or expired. Cannot proceed with Ely4Everyone login.")
+        return null
     }
 }

@@ -133,49 +133,12 @@ object AuthWorkflowManager {
     }
 
     fun syncLatestSessionFromAuthHost(): Boolean {
-        val relayBaseUrl = ModConfigStore.load().resolvedAuthServerBaseUrl().trimEnd('/')
-        return runCatching {
-            logger.info("Requesting latest Ely auth session from auth host {}", relayBaseUrl)
-            val pollResult = AuthHostClient.latestSession(relayBaseUrl)
-            val authSessionToken = pollResult.authSessionToken
-            val elyAccessToken = pollResult.elyAccessToken
-            val username = pollResult.username
-            val uuid = pollResult.uuid
-            val expiresAt = pollResult.expiresAtEpochSeconds
-
-            if (pollResult.status != "completed" || authSessionToken.isNullOrBlank() || elyAccessToken.isNullOrBlank() || username.isNullOrBlank() || uuid.isNullOrBlank() || expiresAt == null) {
-                state = AuthFlowState(
-                    status = AuthFlowStatus.ERROR,
-                    message = "Не удалось получить последнюю Ely-сессию: ${pollResult.error ?: pollResult.status}",
-                )
-                false
-            } else {
-                ClientSessionStore.save(
-                    ClientSessionState(
-                        relayBaseUrl = relayBaseUrl,
-                        authSessionToken = authSessionToken,
-                        elyAccessToken = elyAccessToken,
-                        authSessionExpiresAt = Instant.ofEpochSecond(expiresAt),
-                        elyUsername = username,
-                        elyUuid = uuid,
-                        elyTexturesValue = pollResult.texturesValue,
-                        elyTexturesSignature = pollResult.texturesSignature,
-                    ),
-                )
-                MinecraftClientSessionBridge.refreshActiveIdentity()
-                state = AuthFlowState(
-                    status = AuthFlowStatus.SUCCESS,
-                    message = "Сессия синхронизирована: $username ($uuid)",
-                )
-                true
-            }
-        }.getOrElse { exception ->
-            state = AuthFlowState(
-                status = AuthFlowStatus.ERROR,
-                message = "Ошибка синхронизации Ely-сессии: ${exception.message ?: exception::class.java.simpleName}",
-            )
-            false
-        }
+        logger.warn("syncLatestSessionFromAuthHost is disabled due to security vulnerability.")
+        state = AuthFlowState(
+            status = AuthFlowStatus.ERROR,
+            message = "Auto-sync disabled. Please log in via browser again.",
+        )
+        return false
     }
 
     fun tick(client: MinecraftClient) {

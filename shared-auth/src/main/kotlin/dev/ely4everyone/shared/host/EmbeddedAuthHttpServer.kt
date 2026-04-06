@@ -82,7 +82,7 @@ class EmbeddedAuthHttpServer(
             createContext("/api/v1/config") { exchange -> handleConfig(exchange) }
             createContext("/api/v1/auth/start") { exchange -> handleAuthStart(exchange) }
             createContext("/api/v1/auth/poll") { exchange -> handleAuthPoll(exchange) }
-            createContext("/api/v1/auth/dev/latest-session") { exchange -> handleLatestSession(exchange) }
+
             createContext("/api/v1/auth/issue-ticket") { exchange -> handleIssueTicket(exchange) }
             createContext("/api/v1/dev/tickets") { exchange -> handleDevTickets(exchange) }
             createContext("/sessionserver/session/minecraft/join") { exchange -> handleSessionJoin(exchange) }
@@ -302,47 +302,7 @@ class EmbeddedAuthHttpServer(
         writeText(exchange, 200, "text/plain; charset=utf-8", body)
     }
 
-    private fun handleLatestSession(exchange: HttpExchange) {
-        var sessionVar = clientSessionStore.latest()
-        if (sessionVar == null) {
-            writeText(exchange, 404, "text/plain; charset=utf-8", "status=failed\nerror=no_session")
-            return
-        }
-        val currentSession = sessionVar
-        val now = Instant.now()
-        if (currentSession.expiresAtEpochSeconds - now.epochSecond < 10800 && currentSession.refreshToken != null) {
-            runCatching {
-                val tokenResponse = oauthClient.refreshToken(currentSession.refreshToken!!)
-                val newExpiresAt = now.plusSeconds(config.clientSessionTtlSeconds).epochSecond
-                sessionVar = clientSessionStore.updateTokens(
-                    currentSession.sessionToken,
-                    tokenResponse.accessToken,
-                    tokenResponse.refreshToken,
-                    newExpiresAt
-                ) ?: sessionVar
-                logger.info("Automatically refreshed Ely access token for ${currentSession.username}")
-            }.onFailure {
-                logger.warn("Failed to auto-refresh Ely token for session ${currentSession.sessionToken}", it)
-            }
-        }
-        val finalSession = sessionVar!!
-        val textures = finalSession.properties.firstOrNull { it.name == "textures" }
-        writeText(
-            exchange,
-            200,
-            "text/plain; charset=utf-8",
-            """
-            status=completed
-            auth_session_token=${finalSession.sessionToken}
-            ely_access_token=${finalSession.elyAccessToken}
-            username=${finalSession.username}
-            uuid=${finalSession.uuid}
-            exp=${finalSession.expiresAtEpochSeconds}
-            textures_value=${textures?.value.orEmpty()}
-            textures_signature=${textures?.signature.orEmpty()}
-            """.trimIndent(),
-        )
-    }
+
 
     private fun handleIssueTicket(exchange: HttpExchange) {
         val params = requestParameters(exchange)

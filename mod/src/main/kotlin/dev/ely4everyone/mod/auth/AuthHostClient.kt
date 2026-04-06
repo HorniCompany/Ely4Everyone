@@ -93,25 +93,7 @@ object AuthHostClient {
             }
     }
 
-    fun latestSession(relayBaseUrl: String): AuthPollResult {
-        val request = HttpRequest.newBuilder(
-            URI.create(relayBaseUrl.trimEnd('/') + "/api/v1/auth/dev/latest-session"),
-        ).GET().build()
 
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
-        val values = parsePayload(response.body())
-        return AuthPollResult(
-            status = values["status"] ?: if (response.statusCode() == 404) "failed" else "pending",
-            authSessionToken = values["auth_session_token"],
-            elyAccessToken = values["ely_access_token"],
-            username = values["username"],
-            uuid = values["uuid"],
-            expiresAtEpochSeconds = values["exp"]?.toLongOrNull(),
-            texturesValue = values["textures_value"],
-            texturesSignature = values["textures_signature"],
-            error = values["error"],
-        )
-    }
 
     private fun encode(value: String): String {
         return URLEncoder.encode(value, StandardCharsets.UTF_8)
