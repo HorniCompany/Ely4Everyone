@@ -84,6 +84,7 @@ class EmbeddedAuthHttpServer(
             createContext("/api/v1/auth/poll") { exchange -> handleAuthPoll(exchange) }
 
             createContext("/api/v1/auth/issue-ticket") { exchange -> handleIssueTicket(exchange) }
+            createContext("/api/v1/auth/dev/latest-session") { exchange -> handleLatestSession(exchange) }
             createContext("/api/v1/dev/tickets") { exchange -> handleDevTickets(exchange) }
             createContext("/sessionserver/session/minecraft/join") { exchange -> handleSessionJoin(exchange) }
             createContext("/sessionserver/session/minecraft/hasJoined") { exchange -> handleSessionHasJoined(exchange) }
@@ -106,6 +107,11 @@ class EmbeddedAuthHttpServer(
         server = null
         executorService?.shutdownNow()
         executorService = null
+    }
+
+    private fun handleLatestSession(exchange: HttpExchange) {
+        val errorMessage = "status=failed\nerror=Критическая уязвимость!\nВаша версия мода устарела и содержит критический баг (подмена сессии).\nПожалуйста, скачайте и установите новую версию мода."
+        writeText(exchange, 403, "text/plain; charset=utf-8", errorMessage)
     }
 
     fun consumeIssuedTicketRecord(ticketId: String): IssuedLoginTicketRecord? = issuedLoginTicketStore.consume(ticketId)

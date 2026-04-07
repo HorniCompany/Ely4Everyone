@@ -75,24 +75,70 @@ class Ely4EveryoneVelocityPlugin @Inject constructor(
     @Subscribe
     fun onPreLogin(event: PreLoginEvent) {
         val username = event.username
+        val clientUuid = event.uniqueId
+        
+        // Вектор 1 (Deep Think): UUID Fingerprinting
+        val expectedOfflineUuid = java.util.UUID.nameUUIDFromBytes(("OfflinePlayer:" + username).toByteArray(Charsets.UTF_8))
+        
+        // Быстрый путь 1: Bedrock игроки (Geyser/Floodgate). Обычно у них префикс '.' или UUID версии 0.
+        val isBedrock = username.startsWith(".") || (clientUuid != null && clientUuid.version() == 0)
+        if (isBedrock) {
+            logger.info("Ely4Everyone: {} идентифицирован как Bedrock. Пропускаем API и пускаем в Offline Mode!", username)
+            event.result = PreLoginEvent.PreLoginComponentResult.forceOfflineMode()
+            return
+        }
+
+        // Быстрый путь 2: Пиратские клиенты (UUID идеально совпадает с MD5-формулой Minecraft)
+        if (clientUuid != null && clientUuid == expectedOfflineUuid) {
+            logger.info("Ely4Everyone: {} отправляет оффлайн UUID ({}). Это 100% пират. Пропускаем Ely.by и пускаем в Offline Mode!", username, clientUuid)
+            event.result = PreLoginEvent.PreLoginComponentResult.forceOfflineMode()
+            return
+        }
+        
+        if (clientUuid == null) {
+            logger.info("Ely4Everyone: {} не прислал UUID (старый клиент). Обычная проверка по API.", username)
+        } else {
+            logger.info("Ely4Everyone: {} прислал уникальный UUID ({}). Похоже на Ely/Mojang аккаунт. Проверяем регистрацию.", username, clientUuid)
+        }
+
         try {
             val client = java.net.http.HttpClient.newBuilder()
                 .connectTimeout(java.time.Duration.ofSeconds(5))
                 .build()
-            val request = java.net.http.HttpRequest.newBuilder()
+                
+            // Шаг 1: Ищем профиль на Ely.by
+            val elyRequest = java.net.http.HttpRequest.newBuilder()
                 .uri(java.net.URI.create("https://authserver.ely.by/api/users/profiles/minecraft/$username"))
                 .GET()
                 .build()
             
-            val response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString())
-            if (response.statusCode() == 200) {
-                logger.info("Ely4Everyone: {} is registered on Ely.by. Forcing online mode native authentication!", username)
+            val elyResponse = client.send(elyRequest, java.net.http.HttpResponse.BodyHandlers.ofString())
+            if (elyResponse.statusCode() == 200) {
+                logger.info("Ely4Everyone: {} зарегистрирован на Ely.by. Force Online Mode!", username)
                 event.result = PreLoginEvent.PreLoginComponentResult.forceOnlineMode()
-            } else {
-                logger.info("Ely4Everyone: {} is not registered on Ely.by. Continuing as offline mode.", username)
+                return
+            } 
+            
+            // Шаг 2: Ищем профиль в Mojang
+            val mojangRequest = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create("https://api.mojang.com/users/profiles/minecraft/$username"))
+                .GET()
+                .build()
+            
+            val mojangResponse = client.send(mojangRequest, java.net.http.HttpResponse.BodyHandlers.ofString())
+            if (mojangResponse.statusCode() == 200) {
+                logger.info("Ely4Everyone: {} имеет лицензию Mojang. Force Online Mode!", username)
+                event.result = PreLoginEvent.PreLoginComponentResult.forceOnlineMode()
+                return
             }
+
+            // Игрок не найден ни в одной базе! Он - уникальный пират (даже без UUIDv3), пустим его как пирата.
+            logger.info("Ely4Everyone: {} не найден ни на Ely.by, ни в Mojang. Force Offline Mode.", username)
+            event.result = PreLoginEvent.PreLoginComponentResult.forceOfflineMode()
+
         } catch (e: Exception) {
-            logger.warn("Ely4Everyone: Error checking Ely.by profile for {}", username, e)
+            logger.warn("Ely4Everyone: Ошибка API (Ely.by или Mojang) для {}. Fallback в Offline.", username, e)
+            event.result = PreLoginEvent.PreLoginComponentResult.forceOfflineMode()
         }
     }
 }
