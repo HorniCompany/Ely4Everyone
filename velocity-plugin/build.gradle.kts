@@ -38,6 +38,8 @@ dependencies {
     compileOnly("org.geysermc.floodgate:api:2.2.3-SNAPSHOT")
     implementation(kotlin("stdlib"))
     testImplementation(kotlin("test"))
+    testImplementation("org.slf4j:slf4j-api:2.0.16")
+    testImplementation("org.geysermc.floodgate:api:2.2.3-SNAPSHOT")
 }
 
 tasks.jar {

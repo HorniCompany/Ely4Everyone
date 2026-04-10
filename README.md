@@ -105,19 +105,23 @@
 
 ## Для владельцев серверов (Velocity Setup)
 
-Если вы владелец прокси-сервера (Velocity) и хотите впускать игроков с модом Ely4Everyone прозрачно (как настоящих лицензионщиков), вам **всё еще необходимо установить authlib-injector** на стороне Proxy для замены проверок Mojang на Ely.by!
+Если вы владелец прокси-сервера (Velocity) и хотите впускать игроков с модом Ely4Everyone прозрачно, а также пускать обычных Mojang-игроков по тому же Premium flow, вам **всё еще нужен `authlib-injector` на стороне Proxy**.
 
-Наш плагин автоматизирует прохождение `FastLogin` и натягивает скины для пиратов, но сами криптографические проверки сессий (Mojang session HTTPS calls), которые выполняет ядро Velocity при включении Premium-режима, можно изменить только извне (через `javaagent`). Из соображений безопасности Java 21, плагин не может сделать инъекцию в собственный запущенный процесс.
+Но теперь `authlib-injector` должен смотреть **не прямо в Ely.by**, а в локальный hybrid auth-host, который поднимает `velocity-plugin`. Именно он решает, когда проверять сессию через Ely.by, а когда через Mojang.
 
 **Как настроить прокси:**
 1. Скачайте свежую версию [authlib-injector](https://github.com/yushijinhun/authlib-injector/releases);
 2. Поместите скачанный `authlib-injector.jar` в корень папки с вашим Velocity;
-3. Отредактируйте ваш **start.sh** / **start.bat** и добавьте аргумент `-javaagent`:
+3. Отредактируйте ваш **start.sh** / **start.bat** и добавьте аргументы JVM:
    ```bash
-   java -javaagent:authlib-injector.jar=http://authserver.ely.by -Xms1G -Xmx1G -jar velocity.jar
+   java \
+     -Dauthlibinjector.ignoredPackages=dev.ely4everyone.velocity,dev.ely4everyone.shared.host \
+     -Dauthlibinjector.mojangNamespace=enabled \
+     -javaagent:authlib-injector.jar=http://127.0.0.1:18086 \
+     -Xms1G -Xmx1G -jar velocity.jar
    ```
 4. Убедитесь, что в конфигах ваших бэкенд-серверов (Paper/Purpur) стоит `online-mode=false`!
-5. Запускайте сервер. Теперь Velocity будет сверять сессии прозрачно через Ely.by для обладателей мода!
+5. Запускайте сервер. Теперь Velocity будет сверять Ely.by и Mojang сессии через локальный hybrid auth-host Ely4Everyone.
 
 ## Что реально достижимо
 

@@ -1,26 +1,31 @@
-# Ely4Everyone: Настройка Proxy-сервера и Круги Ада (LimboAuth + LimboFilter + FastLogin)
+# Ely4Everyone: Настройка Proxy-сервера и Круги Ада (LimboAuth + LimboFilter + Hybrid Auth Host)
 
-Этот документ описывает все "круги ада", которые пришлось пройти, чтобы заставить связку Velocity + Ely.by + FastLogin + LimboAuth + LimboFilter работать безупречно. Если вы настраиваете свой Velocity прокси-сервер для Ely4Everyone — читайте внимательно, чтобы не повторить наши ошибки.
+Этот документ описывает рабочую схему `Velocity + authlib-injector + Ely4Everyone hybrid auth-host + LimboAuth + LimboFilter`.
 
 ## Архитектура Авторизации
 
 Когда игрок подключается к нашему Velocity серверу, должен происходить следующий "счастливый" путь (Happy Path):
 
 ### Для игрока с модом Ely4Everyone (Premium через Ely.by)
-1. **Velocity + authlib-injector:** Прокси имеет модифицированный `authlib-injector`-ом Mojang API, перенаправленный на `https://ely.by`.
-2. **FastLogin:** Проверяет Ely.by API (через authlib-injector redirect), обнаруживает ник как premium.
-3. **Velocity:** Запрашивает session verification — клиент с модом Ely4Everyone имеет валидную Ely.by сессию → **проходит**.
+1. **Velocity + authlib-injector:** Прокси направляет authlib-проверки не в Ely.by напрямую, а в локальный Ely4Everyone auth-host.
+2. **Ely4Everyone `PreLogin`:** Плагин определяет, что игрок должен идти по premium flow, и пинит authority `ELY` на время handshake.
+3. **Velocity:** Запрашивает `hasJoined`, а локальный hybrid auth-host проверяет сессию через Ely.by.
 4. **LimboAuth:** Видит Premium, пускает без пароля.
 5. **LimboFilter:** Online-mode bypass → сразу в хаб.
 
-### Для пирата (без мода, без лицензии)
-1. **FastLogin:** Проверяет Ely.by API, может найти ник (если он зарегистрирован на Ely.by) → пытается premium auth.
-2. **Session verification fails** → `Invalid session` при первом подключении.
-3. **FastLogin `secondAttemptCracked: true`** → при повторном подключении пускает как cracked.
-4. **LimboAuth:** Просит `/register` или `/login` (оффлайн-авторизация).
-5. **Игрок получает offline UUID** → отдельный инвентарь и прогресс от Ely.by-игрока с тем же ником.
+### Для Mojang игрока (Premium через Mojang)
+1. **Ely4Everyone `PreLogin`:** Плагин определяет Mojang authority или оставляет dual-verify candidate.
+2. **Velocity:** Запрашивает `hasJoined`, а локальный hybrid auth-host проверяет Mojang sessionserver.
+3. **LimboAuth:** Видит Premium, пускает без пароля.
+4. **Игрок получает Mojang UUID** и отдельную identity от Ely.by-аккаунта с тем же ником.
 
-> **ВАЖНО:** Плагин `ely4everyone` **НЕ форсит** `isPremium` через FastLogin! Всю логику определения premium-статуса берёт на себя FastLogin + authlib-injector. Наш плагин только логирует для наблюдаемости.
+### Для пирата (без мода, без лицензии)
+1. **Ely4Everyone `PreLogin`:** Если игрок отправляет offline UUID или ник не найден ни в Ely.by, ни в Mojang, прокси сразу отправляет его в offline flow.
+2. Если ник premium существует, но session verification проваливается, игрок не проходит premium auth.
+3. **LimboAuth:** Просит `/register` или `/login` (оффлайн-авторизация).
+4. **Игрок получает offline UUID** → отдельный инвентарь и прогресс от Ely.by-игрока с тем же ником.
+
+> **ВАЖНО:** `FastLogin` больше не является источником истины в этой схеме. Источник истины теперь `ely4everyone` + локальный hybrid auth-host.
 
 Звучит просто? На деле мы споткнулись о несколько глубоких проблем кэширования и логики Limbo-плагинов.
 

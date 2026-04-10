@@ -49,6 +49,9 @@ class EmbeddedAuthHttpServer(
     private val config: EmbeddedAuthHostConfig,
     private val logger: Logger,
     dataDirectory: Path,
+    private val pendingPremiumLoginStore: PendingPremiumLoginStore = PendingPremiumLoginStore(config.issuedTicketTtlSeconds),
+    private val profileResolver: HybridProfileResolver = HybridProfileResolver(HttpHybridAuthUpstream()),
+    private val sessionVerifier: HybridSessionVerifier = HybridSessionVerifier(HttpHybridAuthUpstream(), pendingPremiumLoginStore),
 ) {
     private val stateStore = OAuthStateStore(config.oauthStateTtlSeconds)
     private val clientSessionStore = ClientAuthSessionStore(
@@ -79,11 +82,13 @@ class EmbeddedAuthHttpServer(
             createContext("/health") { exchange -> handleHealth(exchange) }
             createContext("/api/v2/discovery") { exchange -> handleDiscovery(exchange) }
             createContext("/api/profiles/minecraft") { exchange -> handleBatchProfiles(exchange) }
+            createContext("/api/authlib-injector") { exchange -> handleAuthlibInjectorMetadata(exchange) }
             createContext("/api/v1/config") { exchange -> handleConfig(exchange) }
             createContext("/api/v1/auth/start") { exchange -> handleAuthStart(exchange) }
             createContext("/api/v1/auth/poll") { exchange -> handleAuthPoll(exchange) }
 
             createContext("/api/v1/auth/issue-ticket") { exchange -> handleIssueTicket(exchange) }
+            createContext("/api/v1/auth/refresh") { exchange -> handleRefreshSession(exchange) }
             createContext("/api/v1/auth/dev/latest-session") { exchange -> handleLatestSession(exchange) }
             createContext("/api/v1/dev/tickets") { exchange -> handleDevTickets(exchange) }
             createContext("/sessionserver/session/minecraft/join") { exchange -> handleSessionJoin(exchange) }
@@ -91,6 +96,7 @@ class EmbeddedAuthHttpServer(
             createContext("/sessionserver/session/minecraft/profile") { exchange -> handleSessionProfile(exchange) }
             createContext("/oauth/callback") { exchange -> handleOAuthCallback(exchange) }
             createContext("/api/v1/auth/limboauth") { exchange -> handleLimboAuthIsPremium(exchange) }
+            createContext("/") { exchange -> handleRoot(exchange) }
             start()
         }
         logger.info(
@@ -109,12 +115,82 @@ class EmbeddedAuthHttpServer(
         executorService = null
     }
 
+    private fun handleRefreshSession(exchange: HttpExchange) {
+        val params = requestParameters(exchange)
+        val sessionToken = params["session_token"]
+        if (sessionToken.isNullOrBlank()) {
+            writeText(exchange, 400, "text/plain; charset=utf-8", "status=failed\nerror=missing_session_token")
+            return
+        }
+        val clientSession = clientSessionStore.get(sessionToken)
+        if (clientSession == null) {
+            writeText(exchange, 404, "text/plain; charset=utf-8", "status=failed\nerror=invalid_session")
+            return
+        }
+        if (clientSession.refreshToken.isNullOrEmpty()) {
+            writeText(exchange, 400, "text/plain; charset=utf-8", "status=failed\nerror=no_refresh_token")
+            return
+        }
+
+        runCatching {
+            val tokenResponse = oauthClient.refreshToken(clientSession.refreshToken)
+            val updated = clientSessionStore.updateTokens(
+                sessionToken = sessionToken,
+                newElyAccessToken = tokenResponse.accessToken,
+                newRefreshToken = tokenResponse.refreshToken,
+                newExpiresAtEpochSeconds = Instant.now().plusSeconds(config.clientSessionTtlSeconds).epochSecond
+            )
+            if (updated != null) {
+                writeText(
+                    exchange,
+                    200,
+                    "text/plain; charset=utf-8",
+                    """
+                    status=completed
+                    ely_access_token=${updated.elyAccessToken}
+                    exp=${updated.expiresAtEpochSeconds}
+                    """.trimIndent(),
+                )
+            } else {
+                writeText(exchange, 500, "text/plain; charset=utf-8", "status=failed\nerror=session_update_failed")
+            }
+        }.onFailure { exception ->
+            logger.warn("Failed to refresh token via OAuth client", exception)
+            writeText(exchange, 500, "text/plain; charset=utf-8", "status=failed\nerror=${exception.message ?: "refresh_error"}")
+        }
+    }
+
     private fun handleLatestSession(exchange: HttpExchange) {
         val errorMessage = "status=failed\nerror=Критическая уязвимость!\nВаша версия мода устарела и содержит критический баг (подмена сессии).\nПожалуйста, скачайте и установите новую версию мода."
         writeText(exchange, 403, "text/plain; charset=utf-8", errorMessage)
     }
 
     fun consumeIssuedTicketRecord(ticketId: String): IssuedLoginTicketRecord? = issuedLoginTicketStore.consume(ticketId)
+
+    fun registerPendingLogin(
+        username: String,
+        authority: AuthAuthority?,
+        expectedUuid: UUID?,
+        clientUuid: UUID?,
+        allowedAuthorities: Set<AuthAuthority>,
+    ) {
+        pendingPremiumLoginStore.put(
+            username = username,
+            authority = authority,
+            expectedUuid = expectedUuid,
+            clientUuid = clientUuid,
+            allowedAuthorities = allowedAuthorities,
+        )
+    }
+
+    fun clearPendingLogin(username: String) {
+        pendingPremiumLoginStore.clear(username)
+    }
+
+    fun localBaseUrl(): String? {
+        val address = server?.address ?: return null
+        return "http://${address.hostString}:${address.port}"
+    }
 
     private fun handleLimboAuthIsPremium(exchange: HttpExchange) {
         try {
@@ -132,55 +208,27 @@ class EmbeddedAuthHttpServer(
             }
 
             val username = parts[5]
+            val pending = pendingPremiumLoginStore.get(username)
+            val preferredAuthority = pending?.authority
             val session = clientSessionStore.findByUsername(username)
 
-            if (session != null) {
-                // Return 200 OK natively
+            if (preferredAuthority != AuthAuthority.MOJANG && session != null) {
                 val response = """{"name":"$username","id":"${session.uuid.replace("-", "")}"}"""
                 writeText(exchange, 200, "application/json; charset=utf-8", response)
                 return
             }
-            
-            // Not in session store. Cascade to Ely.by to support Mod users who didn't Oauth loop
-            try {
-                val client = java.net.http.HttpClient.newHttpClient()
-                
-                // 1. Check Ely.by (Requires POST with array of names)
-                val elyRequest = java.net.http.HttpRequest.newBuilder()
-                    .uri(java.net.URI.create("https://authserver.ely.by/api/profiles/minecraft"))
-                    .header("Content-Type", "application/json")
-                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString("[\"$username\"]"))
-                    .build()
-                val elyResponse = client.send(elyRequest, java.net.http.HttpResponse.BodyHandlers.ofString())
-                
-                if (elyResponse.statusCode() == 200) {
-                    val bodyStr = elyResponse.body().trim()
-                    if (bodyStr.startsWith("[") && bodyStr.length > 5) {
-                        // Extract first object since it returns an array
-                        val objContent = bodyStr.substring(1, bodyStr.length - 1).trim()
-                        if (objContent.isNotEmpty()) {
-                            writeText(exchange, 200, "application/json; charset=utf-8", objContent)
-                            return
-                        }
-                    }
-                }
 
-                // 2. Check Mojang
-                val mojangRequest = java.net.http.HttpRequest.newBuilder()
-                    .uri(java.net.URI.create("https://api.mojang.com/users/profiles/minecraft/$username"))
-                    .GET()
-                    .build()
-                val mojangResponse = client.send(mojangRequest, java.net.http.HttpResponse.BodyHandlers.ofString())
-                
-                if (mojangResponse.statusCode() == 200) {
-                    writeText(exchange, 200, "application/json; charset=utf-8", mojangResponse.body())
-                    return
-                }
-            } catch (netEx: Exception) {
-                logger.warn("Network error during LimboAuth profile check", netEx)
+            val lookup = profileResolver.lookup(username)
+            val responseProfile = when (preferredAuthority) {
+                AuthAuthority.ELY -> lookup.elyProfile
+                AuthAuthority.MOJANG -> lookup.mojangProfile
+                else -> lookup.elyProfile ?: lookup.mojangProfile
+            }
+            if (responseProfile != null) {
+                writeText(exchange, 200, "application/json; charset=utf-8", responseProfile.rawJson)
+                return
             }
 
-            // LimboAuth expects the exact Mojang 404 response
             val notFoundBody = """{"path":"$path","error":"Not Found","errorMessage":"Couldn't find any profile with name $username"}"""
             writeText(exchange, 404, "application/json; charset=utf-8", notFoundBody)
         } catch (e: Exception) {
@@ -238,32 +286,59 @@ class EmbeddedAuthHttpServer(
     }
 
     private fun handleBatchProfiles(exchange: HttpExchange) {
-        AuthlibInjectorCompatibilityBridge.proxyJsonPost(exchange, AuthlibInjectorCompatibilityBridge.batchProfilesTarget())
-    }
-
-    private fun handleSessionJoin(exchange: HttpExchange) {
-        AuthlibInjectorCompatibilityBridge.proxyJsonPost(exchange, AuthlibInjectorCompatibilityBridge.joinTarget())
-    }
-
-    private fun handleSessionHasJoined(exchange: HttpExchange) {
-        AuthlibInjectorCompatibilityBridge.proxyGet(
+        if (!exchange.requestMethod.equals("POST", ignoreCase = true)) {
+            writeText(exchange, 405, "application/json; charset=utf-8", """{"error":"Method Not Allowed"}""")
+            return
+        }
+        val names = parseJsonStringArray(exchange.requestBody.readBytes().toString(StandardCharsets.UTF_8))
+        val profiles = names.mapNotNull { username ->
+            val pending = pendingPremiumLoginStore.get(username)
+            val lookup = profileResolver.lookup(username)
+            when (pending?.authority) {
+                AuthAuthority.ELY -> lookup.elyProfile
+                AuthAuthority.MOJANG -> lookup.mojangProfile
+                else -> lookup.elyProfile ?: lookup.mojangProfile
+            }
+        }
+        writeText(
             exchange,
-            AuthlibInjectorCompatibilityBridge.hasJoinedTarget(exchange.requestURI.rawQuery),
+            200,
+            "application/json; charset=utf-8",
+            profiles.joinToString(prefix = "[", postfix = "]") { it.rawJson },
         )
     }
 
+    private fun handleSessionJoin(exchange: HttpExchange) {
+        val contentType = exchange.requestHeaders.getFirst("Content-Type") ?: "application/json"
+        val response = sessionVerifier.submitJoin(exchange.requestBody.readBytes(), contentType)
+        writeResponse(exchange, response.statusCode, response.contentType, response.body)
+    }
+
+    private fun handleSessionHasJoined(exchange: HttpExchange) {
+        val params = parseQuery(exchange.requestURI.rawQuery)
+        val username = params["username"]
+        if (username.isNullOrBlank()) {
+            writeText(exchange, 400, "application/json; charset=utf-8", """{"error":"missing_username"}""")
+            return
+        }
+        val response = sessionVerifier.verifyHasJoined(
+            username = username,
+            serverId = params["serverId"],
+            ip = params["ip"],
+        )
+        writeResponse(exchange, response.statusCode, response.contentType, response.body)
+    }
+
     private fun handleSessionProfile(exchange: HttpExchange) {
-        val prefix = "/sessionserver/session/minecraft/profile/"
+        val prefix = "/sessionserver/session/minecraft/profile"
         val fullPath = exchange.requestURI.path
-        val uuidPath = fullPath.removePrefix(prefix).takeIf { it.isNotBlank() }
+        val uuidPath = fullPath.removePrefix(prefix).removePrefix("/").takeIf { it.isNotBlank() }
         if (uuidPath == null) {
             writeText(exchange, 400, "text/plain; charset=utf-8", "error=missing_profile_uuid")
             return
         }
-        AuthlibInjectorCompatibilityBridge.proxyGet(
-            exchange,
-            AuthlibInjectorCompatibilityBridge.profileTarget(uuidPath, exchange.requestURI.rawQuery),
-        )
+        val response = sessionVerifier.fetchProfile(uuidPath, exchange.requestURI.rawQuery)
+        writeResponse(exchange, response.statusCode, response.contentType, response.body)
     }
 
     private fun handleAuthStart(exchange: HttpExchange) {
@@ -422,6 +497,19 @@ class EmbeddedAuthHttpServer(
         }
     }
 
+    private fun handleAuthlibInjectorMetadata(exchange: HttpExchange) {
+        val response = sessionVerifier.fetchMetadataResponse()
+        writeResponse(exchange, response.statusCode, response.contentType, response.body)
+    }
+
+    private fun handleRoot(exchange: HttpExchange) {
+        if (exchange.requestURI.path != "/") {
+            writeText(exchange, 404, "text/plain; charset=utf-8", "Not Found")
+            return
+        }
+        handleAuthlibInjectorMetadata(exchange)
+    }
+
     private fun issueTicket(
         uuid: String,
         username: String,
@@ -488,6 +576,13 @@ class EmbeddedAuthHttpServer(
             segmentStart = separatorIndex + 1
         }
         return result
+    }
+
+    private fun parseJsonStringArray(json: String): List<String> {
+        return Regex(""""((?:\\.|[^"\\])*)"""")
+            .findAll(json)
+            .map { match -> match.groupValues[1] }
+            .toList()
     }
 
     private fun writeText(exchange: HttpExchange, statusCode: Int, contentType: String, body: String) {

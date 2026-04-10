@@ -186,6 +186,45 @@ object JsonFieldReader {
         }.toList()
     }
 
+    fun readProfile(json: String, authority: AuthAuthority): RemoteGameProfile? {
+        val rawId = readString(json, "id") ?: return null
+        val username = readString(json, "name") ?: return null
+        return RemoteGameProfile(
+            authority = authority,
+            username = username,
+            uuid = normalizeUuid(rawId) ?: return null,
+            rawJson = json,
+        )
+    }
+
+    fun readFirstJsonObjectFromArray(jsonArray: String): String? {
+        val trimmed = jsonArray.trim()
+        if (trimmed == "[]") {
+            return null
+        }
+        val matcher = Regex("""\{.*}""", setOf(RegexOption.DOT_MATCHES_ALL)).find(trimmed) ?: return null
+        return matcher.value
+    }
+
+    private fun normalizeUuid(value: String): java.util.UUID? {
+        val compact = value.replace("-", "")
+        if (compact.length != 32) {
+            return null
+        }
+        val canonical = buildString(36) {
+            append(compact.substring(0, 8))
+            append('-')
+            append(compact.substring(8, 12))
+            append('-')
+            append(compact.substring(12, 16))
+            append('-')
+            append(compact.substring(16, 20))
+            append('-')
+            append(compact.substring(20, 32))
+        }
+        return runCatching { java.util.UUID.fromString(canonical) }.getOrNull()
+    }
+
     private fun decodeJsonString(value: String): String {
         return value
             .replace("\\/", "/")
