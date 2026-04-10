@@ -133,12 +133,38 @@ object AuthWorkflowManager {
     }
 
     fun syncLatestSessionFromAuthHost(): Boolean {
-        logger.warn("syncLatestSessionFromAuthHost is disabled due to security vulnerability.")
-        state = AuthFlowState(
-            status = AuthFlowStatus.ERROR,
-            message = "Auto-sync disabled. Please log in via browser again.",
-        )
-        return false
+        val currentSession = ClientSessionStore.load()
+        if (currentSession.authSessionToken.isNullOrBlank() || currentSession.relayBaseUrl.isNullOrBlank()) {
+            logger.warn("Cannot auto-refresh: missing session token or relay base url.")
+            return false
+        }
+
+        return try {
+            val result = AuthHostClient.refreshSession(currentSession.relayBaseUrl, currentSession.authSessionToken)
+            if (result.status == "completed") {
+                val expiresAt = result.expiresAtEpochSeconds ?: return false
+                val elyAccessToken = result.elyAccessToken ?: return false
+
+                ClientSessionStore.save(
+                    currentSession.copy(
+                        elyAccessToken = elyAccessToken,
+                        authSessionExpiresAt = Instant.ofEpochSecond(expiresAt)
+                    )
+                )
+                logger.info("Successfully refreshed Ely session token via auth host.")
+                true
+            } else {
+                logger.warn("Refresh failed with status {}", result.status)
+                state = AuthFlowState(
+                    status = AuthFlowStatus.ERROR,
+                    message = "Auto-refresh failed (${result.status}: ${result.error}). Please log in via browser.",
+                )
+                false
+            }
+        } catch (e: Exception) {
+            logger.error("Auto-refresh error", e)
+            false
+        }
     }
 
     fun tick(client: MinecraftClient) {

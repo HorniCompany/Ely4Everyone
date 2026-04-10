@@ -28,7 +28,7 @@ object TokenHealthMonitor {
         NOT_AUTHENTICATED,
     }
 
-    private val EXPIRING_SOON_THRESHOLD = Duration.ofHours(12)
+    private val EXPIRING_SOON_THRESHOLD = Duration.ofHours(2)
     private val AUTO_REFRESH_COOLDOWN = Duration.ofMinutes(15)
     private val CHECK_INTERVAL_TICKS = 20 * 30 // Check every 30 seconds
 
