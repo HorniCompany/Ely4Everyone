@@ -1,15 +1,16 @@
-name: Release
+name: Release Sync
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  publish:
+  publish-to-latest-release:
     runs-on: ubuntu-latest
 
     steps:
@@ -34,15 +35,25 @@ jobs:
       - name: Collect release jars
         run: |
           mkdir -p dist
-          find mod/build/libs velocity-plugin/build/libs paper-bridge/build/libs relay/build/libs -maxdepth 1 -type f -name '*.jar' -exec cp {} dist/ \;
+          cp mod/build/libs/ely4everyone-mod-0.1.0-SNAPSHOT.jar dist/
+          cp velocity-plugin/build/libs/ely4everyone-velocity-plugin-0.1.0-SNAPSHOT.jar dist/
+          cp paper-plugin/build/libs/ely4everyone-paper-bridge-0.1.0-SNAPSHOT.jar dist/
           ls -lah dist
 
-      - name: Publish GitHub release
+      - name: Resolve latest release tag
+        id: latest_release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+          latest_tag="$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName')"
+          if [ -z "$latest_tag" ] || [ "$latest_tag" = "null" ]; then
+            echo "No published release found to update" >&2
+            exit 1
           fi
+          echo "tag=$latest_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Replace assets in latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ steps.latest_release.outputs.tag }}" dist/* --clobber

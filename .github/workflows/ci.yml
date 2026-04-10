@@ -40,6 +40,5 @@ jobs:
           path: |
             mod/build/libs/*.jar
             velocity-plugin/build/libs/*.jar
-            paper-bridge/build/libs/*.jar
-            relay/build/libs/*.jar
+            paper-plugin/build/libs/*.jar
           if-no-files-found: error
