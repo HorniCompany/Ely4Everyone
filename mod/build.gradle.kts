@@ -131,9 +131,6 @@ val buildAndSyncToLocalMods by tasks.registering {
     dependsOn(tasks.named("build"))
 }
 
-tasks.named("build") {
-    finalizedBy(syncToLocalMods)
-}
 
 tasks.test {
     useJUnitPlatform()
