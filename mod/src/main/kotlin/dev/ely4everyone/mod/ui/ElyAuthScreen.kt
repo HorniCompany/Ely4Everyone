@@ -35,6 +35,8 @@ import java.nio.charset.StandardCharsets
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
+import kotlin.math.sin
+import kotlin.math.pow
 
 /**
  * Главный экран мода Ely4Everyone.
@@ -57,6 +59,7 @@ class ElyAuthScreen(
     private var catalog = rebuildCatalog()
     private var selectedIndex: Int = 0
     private var errorMessage: String = ""
+    private val openTime = System.currentTimeMillis()
 
     // ── Widgets (initialized in init()) ──
     private lateinit var loginButton: ButtonWidget
@@ -191,14 +194,14 @@ class ElyAuthScreen(
 
         skinWidget = addDrawableChild(
             PlayerSkinWidget(
-                72,
-                90,
+                120,
+                150,
                 client!!.loadedEntityModels,
                 ::currentSkinTextures,
             ),
         )
 
-        // ── Always visible ──
+        // Always invisible close/done
         closeButton = addDrawableChild(
             ButtonWidget.builder(Text.literal("Закрыть")) {
                 saveConfig()
@@ -206,6 +209,9 @@ class ElyAuthScreen(
             }.dimensions(contentLeft, btnY + 80, buttonWidth, buttonHeight).build(),
         )
 
+        // Pre-fetch skin if session already exists
+        ensurePreviewRequested(session)
+        
         refreshWidgets()
     }
 
@@ -216,6 +222,7 @@ class ElyAuthScreen(
         // Auto-transition based on auth state
         when {
             authState.status == AuthFlowStatus.SUCCESS || session.hasUsableAuthSession() -> {
+                ensurePreviewRequested(session)
                 if (mode != Mode.SUCCESS) {
                     mode = Mode.SUCCESS
                     TokenHealthMonitor.forceReevaluate()
@@ -252,184 +259,163 @@ class ElyAuthScreen(
     }
 
     // ══════════════════════════════════════════
-    //  RENDER
-    // ══════════════════════════════════════════
+//  RENDER
+// ══════════════════════════════════════════
 
-    override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
-        // Dark gradient background
-        context.fillGradient(0, 0, width, height, 0xF0101820.toInt(), 0xF0180E1A.toInt())
+override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
+    val timeNow = System.currentTimeMillis()
+    val timeSinceOpen = timeNow - openTime
+    val animProgress = (timeSinceOpen / 700f).coerceIn(0f, 1f)
+    val easeOutQuart = 1f - (1f - animProgress).pow(4)
 
-        // Main panel with mode-specific colors
-        val panelTop = height / 2 - 90
-        val panelBottom = height / 2 + 120
-        val (panelFill, panelBorder) = when (mode) {
-            Mode.LOGIN -> Pair(0xD0152428.toInt(), 0xFF2D8A7B.toInt())
-            Mode.POLLING -> Pair(0xD0152838.toInt(), 0xFF4A9ED9.toInt())
-            Mode.SUCCESS -> Pair(0xD0153028.toInt(), 0xFF3DA57B.toInt())
-            Mode.ERROR -> Pair(0xD02A1518.toInt(), 0xFFA54040.toInt())
-        }
-        drawPanel(context, panelLeft - 10, panelTop - 10, panelRight + 10, panelBottom + 10, panelFill, panelBorder)
+    // Pulsing gradient background
+    val pulse = ((sin(timeNow / 1500.0) + 1.0) / 2.0).toFloat()
+    val topBgColor = mixColor(0xFF030A07.toInt(), 0xFF08140E.toInt(), pulse)
+    val bottomBgColor = mixColor(0xFF0A1812.toInt(), 0xFF142D21.toInt(), pulse)
 
-        // Title
-        context.drawCenteredTextWithShadow(textRenderer, title, centerX, panelTop, COLOR_TITLE)
+    val alphaMask = (easeOutQuart * 0xF0).toInt() shl 24
+    context.fillGradient(0, 0, width, height, topBgColor and 0xFFFFFF or alphaMask, bottomBgColor and 0xFFFFFF or alphaMask)
 
-        when (mode) {
-            Mode.LOGIN -> renderLogin(context, panelTop)
-            Mode.POLLING -> renderPolling(context, panelTop)
-            Mode.SUCCESS -> renderSuccess(context, panelTop)
-            Mode.ERROR -> renderError(context, panelTop)
-        }
+    // Main panel with mode-specific colors
+    val panelTop = (height / 2 - 110) + ((1f - easeOutQuart) * 30).toInt()
+    val panelBottom = (height / 2 + 130) + ((1f - easeOutQuart) * 30).toInt()
 
-        super.render(context, mouseX, mouseY, delta)
+    val alphaFill = (easeOutQuart * 0xD0).toInt() shl 24
+    val alphaBorder = (easeOutQuart * 0xFF).toInt() shl 24
+
+    val (panelFill, panelBorder) = when (mode) {
+        Mode.LOGIN -> Pair(0x121A16 or alphaFill, 0x1E654E or alphaBorder)
+        Mode.POLLING -> Pair(0x121A16 or alphaFill, 0x38B48B or alphaBorder)
+        Mode.SUCCESS -> Pair(0x121A16 or alphaFill, 0x45DEAA or alphaBorder)
+        Mode.ERROR -> Pair(0x2A1518 or alphaFill, 0xA54040 or alphaBorder)
     }
 
-    private fun renderLogin(context: DrawContext, panelTop: Int) {
-        // Subtitle
-        context.drawCenteredTextWithShadow(
-            textRenderer,
-            Text.literal("Играй на серверах с Ely.by"),
-            centerX,
-            panelTop + 14,
-            COLOR_SUBTITLE,
-        )
+    drawTechPanel(context, panelLeft - 10, panelTop - 10, panelRight + 10, panelBottom + 10, panelFill, panelBorder)
 
-        // Host info
-        val selected = selectedEntry()
-        val hostName = selected?.displayName ?: "не выбран"
-        val hostUrl = selected?.baseUrl ?: "-"
-        val trustText = when (selected?.trustState) {
-            AuthHostTrustState.TRUSTED -> "✅ доверенный"
-            AuthHostTrustState.PENDING -> "⚠ требует подтверждения"
-            AuthHostTrustState.BLOCKED -> "❌ заблокирован"
-            null -> "-"
-        }
+    // Title
+    context.drawCenteredTextWithShadow(textRenderer, title, centerX, panelTop, COLOR_TITLE)
 
-        val infoY = panelTop + 36
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal("Сервер: $hostName"), centerX, infoY, COLOR_TEXT)
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal(hostUrl), centerX, infoY + 12, COLOR_DIM)
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal(trustText), centerX, infoY + 24, trustColor(selected))
-
-        // If host needs trust, change login button
-        val actions = AuthHostActionPolicy.forEntry(selected)
-        if (actions.canTrust && !actions.canStartAuth) {
-            loginButton.message = Text.literal("Доверять и войти")
-            loginButton.active = true
-        } else if (actions.canStartAuth) {
-            loginButton.message = Text.literal("Войти через Ely.by")
-            loginButton.active = true
-        } else {
-            loginButton.message = Text.literal("Выберите рабочий хост")
-            loginButton.active = false
-        }
+    when (mode) {
+        Mode.LOGIN -> renderLogin(context, panelTop)
+        Mode.POLLING -> renderPolling(context, panelTop)
+        Mode.SUCCESS -> renderSuccess(context, panelTop)
+        Mode.ERROR -> renderError(context, panelTop)
     }
 
-    private fun renderPolling(context: DrawContext, panelTop: Int) {
-        context.drawCenteredTextWithShadow(
-            textRenderer,
-            Text.literal("Ожидаю авторизацию..."),
-            centerX,
-            panelTop + 14,
-            COLOR_ACCENT,
-        )
+    super.render(context, mouseX, mouseY, delta)
+}
 
-        // Animated dots
-        val dots = ".".repeat(((System.currentTimeMillis() / 500) % 4).toInt())
-        context.drawCenteredTextWithShadow(
-            textRenderer,
-            Text.literal("Завершите вход в браузере$dots"),
-            centerX,
-            panelTop + 36,
-            COLOR_DIM,
-        )
+private fun renderLogin(context: DrawContext, panelTop: Int) {
+    context.drawCenteredTextWithShadow(textRenderer, Text.literal("Играй на серверах с Ely.by"), centerX, panelTop + 14, COLOR_SUBTITLE)
 
-        val authState = AuthWorkflowManager.currentState()
-        context.drawCenteredTextWithShadow(
-            textRenderer,
-            Text.literal(authState.message),
-            centerX,
-            panelTop + 56,
-            COLOR_SUBTITLE,
-        )
+    val selected = selectedEntry()
+    val hostName = selected?.displayName ?: "не выбран"
+    val hostUrl = selected?.baseUrl ?: "-"
+    val trustText = when (selected?.trustState) {
+        AuthHostTrustState.TRUSTED -> "✅ доверенный"
+        AuthHostTrustState.PENDING -> "⚠ требует подтверждения"
+        AuthHostTrustState.BLOCKED -> "❌ заблокирован"
+        null -> "-"
     }
 
-    private fun renderSuccess(context: DrawContext, panelTop: Int) {
-        val session = ClientSessionStore.load()
-        ensurePreviewRequested(session)
+    val infoY = panelTop + 36
+    drawTechPanel(context, centerX - 110, infoY - 6, centerX + 110, infoY + 40, 0x70000000.toInt(), 0x501E654E.toInt())
 
-        context.drawCenteredTextWithShadow(
-            textRenderer,
-            Text.literal("Вы авторизованы ✅"),
-            centerX,
-            panelTop + 14,
-            COLOR_SUCCESS,
-        )
+    context.drawCenteredTextWithShadow(textRenderer, Text.literal("Сервер: $hostName"), centerX, infoY, COLOR_TEXT)
+    context.drawCenteredTextWithShadow(textRenderer, Text.literal(hostUrl), centerX, infoY + 12, COLOR_DIM)
+    context.drawCenteredTextWithShadow(textRenderer, Text.literal(trustText), centerX, infoY + 24, trustColor(selected))
 
-        // Skin preview (left side)
-        val skinLeft = contentLeft
+    val actions = AuthHostActionPolicy.forEntry(selected)
+    if (actions.canTrust && !actions.canStartAuth) {
+        loginButton.message = Text.literal("Доверять и войти")
+        loginButton.active = true
+    } else if (actions.canStartAuth) {
+        loginButton.message = Text.literal("Войти через Ely.by")
+        loginButton.active = true
+    } else {
+        loginButton.message = Text.literal("Выберите рабочий хост")
+        loginButton.active = false
+    }
+}
+
+private fun renderPolling(context: DrawContext, panelTop: Int) {
+    context.drawCenteredTextWithShadow(textRenderer, Text.literal("Ожидаю авторизацию..."), centerX, panelTop + 14, COLOR_ACCENT)
+
+    val dots = ".".repeat(((System.currentTimeMillis() / 500) % 4).toInt())
+    context.drawCenteredTextWithShadow(textRenderer, Text.literal("Завершите вход в браузере$dots"), centerX, panelTop + 36, COLOR_DIM)
+
+    val authState = AuthWorkflowManager.currentState()
+    context.drawCenteredTextWithShadow(textRenderer, Text.literal(authState.message), centerX, panelTop + 56, COLOR_SUBTITLE)
+
+    // Polling spinner animation
+    val spinTime = (System.currentTimeMillis() % 2000L).toFloat() / 2000f
+    val spinnerCenterX = centerX
+    val spinnerCenterY = panelTop + 90
+    val radius = 16.0
+    val angle = spinTime * Math.PI * 2.0
+    context.fill(spinnerCenterX + (kotlin.math.cos(angle) * radius).toInt() - 2, spinnerCenterY + (kotlin.math.sin(angle) * radius).toInt() - 2, spinnerCenterX + (kotlin.math.cos(angle) * radius).toInt() + 2, spinnerCenterY + (kotlin.math.sin(angle) * radius).toInt() + 2, COLOR_ACCENT)
+}
+
+private fun renderSuccess(context: DrawContext, panelTop: Int) {
+    val session = ClientSessionStore.load()
+    ensurePreviewRequested(session)
+
+    context.drawCenteredTextWithShadow(textRenderer, Text.literal("Вы авторизованы ✅"), centerX, panelTop + 14, COLOR_SUCCESS)
+
+    // Skin preview (left side)
+    val skinLeft = panelLeft + 10
         val skinTop = panelTop + 34
+        
+        // tech panel remains at same visual place
+        drawTechPanel(context, skinLeft - 4, skinTop - 4, skinLeft + 124, skinTop + 154, 0xAA08140E.toInt(), 0xFF1E654E.toInt())
+        drawHologramPlatform(context, skinLeft + 60, skinTop + 148, 80)
+
+        // Make the widget much larger so it doesn't clip, but visually centered over the tech panel
+        // Make the widget large enough to not clip its head, but place it properly
+        // Make the widget perfectly fitting the tech panel boundaries, fully centered
         skinWidget.visible = true
-        skinWidget.setX(skinLeft + 4)
-        skinWidget.setY(skinTop + 4)
-        skinWidget.setDimensions(64, 80)
-        drawMiniPanel(context, skinLeft, skinTop, skinLeft + 72, skinTop + 88)
+        skinWidget.setX(skinLeft - 10)
+        skinWidget.setY(skinTop + 5)
+        skinWidget.setDimensions(140, 140)
 
-        // Info (right side)
-        val infoLeft = skinLeft + 84
-        val infoY = skinTop + 6
-        val username = session.elyUsername ?: "неизвестно"
-        val uuid = session.elyUuid ?: "-"
-        val host = selectedEntry()?.displayName ?: "horni.cc"
+    // Info (right side)
+    val infoLeft = skinLeft + 134
+    val infoY = skinTop + 20
+    val username = session.elyUsername ?: "неизвестно"
+    val uuid = session.elyUuid ?: "-"
+    val host = selectedEntry()?.displayName ?: "horni.cc"
 
-        context.drawTextWithShadow(textRenderer, Text.literal("Ник: $username"), infoLeft, infoY, COLOR_TEXT)
-        context.drawTextWithShadow(textRenderer, Text.literal("UUID: ${uuid.take(13)}..."), infoLeft, infoY + 14, COLOR_DIM)
-        context.drawTextWithShadow(textRenderer, Text.literal("Хост: $host"), infoLeft, infoY + 28, COLOR_DIM)
+    drawTechPanel(context, infoLeft - 10, infoY - 10, panelRight, skinTop + 154, 0x70000000.toInt(), 0x501E654E.toInt())
 
-        // Dynamic session status line with health indicator
-        val health = TokenHealthMonitor.currentHealth()
-        val remaining = TokenHealthMonitor.remainingTimeText()
-        val (statusText, statusColor) = when (health) {
-            TokenHealth.HEALTHY -> {
-                val text = if (remaining != null) "Сессия: ✅ $remaining" else "Сессия: активна ✅"
-                text to COLOR_SUCCESS
-            }
-            TokenHealth.EXPIRING_SOON -> {
-                val text = if (remaining != null) "Сессия: ⚠ $remaining" else "Сессия: скоро истечёт ⚠"
-                text to COLOR_WARNING
-            }
-            TokenHealth.EXPIRED -> "Сессия: истекла ❌" to COLOR_ERROR
-            TokenHealth.NOT_AUTHENTICATED -> "Сессия: не активна" to COLOR_DIM
-        }
-        context.drawTextWithShadow(textRenderer, Text.literal(statusText), infoLeft, infoY + 42, statusColor)
+    context.drawTextWithShadow(textRenderer, Text.literal("Ник: $username"), infoLeft, infoY, COLOR_TEXT)
+    context.drawTextWithShadow(textRenderer, Text.literal("UUID: ${uuid.take(13)}..."), infoLeft, infoY + 14, COLOR_DIM)
+    context.drawTextWithShadow(textRenderer, Text.literal("Хост: $host"), infoLeft, infoY + 28, COLOR_DIM)
 
-        // Show refresh button only when expiring soon
-        refreshSessionButton.visible = health == TokenHealth.EXPIRING_SOON
+    val health = TokenHealthMonitor.currentHealth()
+    val remaining = TokenHealthMonitor.remainingTimeText()
+    val (statusText, statusColor) = when (health) {
+        TokenHealth.HEALTHY -> (if (remaining != null) "Сессия: ✅ $remaining" else "Сессия: активна ✅") to COLOR_SUCCESS
+        TokenHealth.EXPIRING_SOON -> (if (remaining != null) "Сессия: ⚠ $remaining" else "Сессия: скоро истечёт ⚠") to COLOR_WARNING
+        TokenHealth.EXPIRED -> "Сессия: истекла ❌" to COLOR_ERROR
+        TokenHealth.NOT_AUTHENTICATED -> "Сессия: не активна" to COLOR_DIM
     }
+    context.drawTextWithShadow(textRenderer, Text.literal(statusText), infoLeft, infoY + 46, statusColor)
 
-    private fun renderError(context: DrawContext, panelTop: Int) {
-        context.drawCenteredTextWithShadow(
-            textRenderer,
-            Text.literal("Ошибка авторизации ❌"),
-            centerX,
-            panelTop + 14,
-            COLOR_ERROR,
-        )
+    refreshSessionButton.visible = health == TokenHealth.EXPIRING_SOON
+}
 
-        // Wrap error message
-        val maxWidth = buttonWidth - 10
-        val wrapped = wrapText(errorMessage, maxWidth)
-        wrapped.take(4).forEachIndexed { index, line ->
-            context.drawCenteredTextWithShadow(
-                textRenderer,
-                Text.literal(line),
-                centerX,
-                panelTop + 38 + index * 12,
-                COLOR_DIM,
-            )
-        }
+private fun renderError(context: DrawContext, panelTop: Int) {
+    context.drawCenteredTextWithShadow(textRenderer, Text.literal("Ошибка авторизации ❌"), centerX, panelTop + 14, COLOR_ERROR)
+
+    val maxWidth = buttonWidth - 10
+    val wrapped = wrapText(errorMessage, maxWidth)
+    wrapped.take(4).forEachIndexed { index, line ->
+        context.drawCenteredTextWithShadow(textRenderer, Text.literal(line), centerX, panelTop + 38 + index * 12, COLOR_DIM)
     }
+}
 
-    // ══════════════════════════════════════════
-    //  WIDGET VISIBILITY
+
+    
     // ══════════════════════════════════════════
 
     private fun refreshWidgets() {
@@ -558,7 +544,60 @@ class ElyAuthScreen(
         previewSourceKey = texturesValue
         val skinUrl = extractSkinUrl(texturesValue) ?: return
         previewFuture = CompletableFuture.supplyAsync {
-            runCatching { URI.create(skinUrl).toURL().openStream().use(NativeImage::read) }.getOrNull()
+            runCatching {
+                val image = URI.create(skinUrl).toURL().openStream().use(NativeImage::read)
+                if (image.height == 32) {
+                    val padded = NativeImage(image.format, 64, 64, true)
+                    padded.fillRect(0, 0, 64, 64, 0x00000000)
+                    
+                    fun copyPixel(sx: Int, sy: Int, dx: Int, dy: Int) {
+                        if (sx in 0..63 && sy in 0..31 && dx in 0..63 && dy in 0..63) {
+                            val argb = image.getColorArgb(sx, sy)
+                            val a = (argb ushr 24) and 0xFF
+                            val r = (argb ushr 16) and 0xFF
+                            val g = (argb ushr 8) and 0xFF
+                            val b = argb and 0xFF
+                            val abgr = (a shl 24) or (b shl 16) or (g shl 8) or r
+                            padded.setColor(dx, dy, abgr)
+                        }
+                    }
+
+                    // Manual copy pixel by pixel
+                    for (x in 0 until 64) {
+                        for (y in 0 until 32) {
+                            copyPixel(x, y, x, y)
+                        }
+                    }
+                    
+                    // Simple mirroring for left leg (dest: 16,48) from right leg (src: 0,16)
+                    for (x in 0 until 4) {
+                        for (y in 0 until 16) {
+                            // Top/Bottom (4x4)
+                            if (y < 4) {
+                                copyPixel(4 + x, 16 + y, 16 + x, 48 + y) // top
+                                copyPixel(8 + x, 16 + y, 20 + x, 48 + y) // bot
+                            }
+                        }
+                    }
+                    for (dx in 0 until 16) {
+                        for (dy in 0 until 12) {
+                            copyPixel(0 + dx, 20 + dy, 16 + dx, 52 + dy)
+                        }
+                    }
+                    
+                    // Direct copy right arm (40,16) to left arm (32,48)
+                    for (dx in 0 until 16) {
+                        for (dy in 0 until 16) {
+                            copyPixel(40 + dx, 16 + dy, 32 + dx, 48 + dy)
+                        }
+                    }
+                    
+                    image.close()
+                    padded
+                } else {
+                    image
+                }
+            }.onFailure { it.printStackTrace() }.getOrNull()
         }
     }
 
@@ -586,24 +625,63 @@ class ElyAuthScreen(
     // ══════════════════════════════════════════
     //  DRAWING HELPERS
     // ══════════════════════════════════════════
+private fun drawPanel(context: DrawContext, left: Int, top: Int, right: Int, bottom: Int, fillColor: Int, borderColor: Int) {
+    drawTechPanel(context, left, top, right, bottom, fillColor, borderColor)
+}
 
-    private fun drawPanel(context: DrawContext, left: Int, top: Int, right: Int, bottom: Int, fillColor: Int = 0xD0152428.toInt(), borderColor: Int = COLOR_BORDER) {
-        context.fill(left, top, right, bottom, fillColor)
-        context.fill(left, top, right, top + 1, borderColor)
-        context.fill(left, bottom - 1, right, bottom, borderColor)
-        context.fill(left, top, left + 1, bottom, borderColor)
-        context.fill(right - 1, top, right, bottom, borderColor)
-    }
+private fun drawMiniPanel(context: DrawContext, left: Int, top: Int, right: Int, bottom: Int) {
+    drawTechPanel(context, left, top, right, bottom, 0xCC0D1411.toInt(), 0xFF1E654E.toInt())
+}
 
-    private fun drawMiniPanel(context: DrawContext, left: Int, top: Int, right: Int, bottom: Int) {
-        context.fill(left, top, right, bottom, 0xCC10272B.toInt())
-        context.fill(left, top, right, top + 1, 0xFF2A6B5E.toInt())
-        context.fill(left, bottom - 1, right, bottom, 0xFF2A6B5E.toInt())
-        context.fill(left, top, left + 1, bottom, 0xFF2A6B5E.toInt())
-        context.fill(right - 1, top, right, bottom, 0xFF2A6B5E.toInt())
-    }
+private fun mixColor(c1: Int, c2: Int, ratio: Float): Int {
+    val a1 = (c1 shr 24) and 0xFF
+    val r1 = (c1 shr 16) and 0xFF
+    val g1 = (c1 shr 8) and 0xFF
+    val b1 = c1 and 0xFF
+    val a2 = (c2 shr 24) and 0xFF
+    val r2 = (c2 shr 16) and 0xFF
+    val g2 = (c2 shr 8) and 0xFF
+    val b2 = c2 and 0xFF
 
-    private fun wrapText(text: String, maxWidth: Int): List<String> {
+    val a = (a1 + (a2 - a1) * ratio).toInt()
+    val r = (r1 + (r2 - r1) * ratio).toInt()
+    val g = (g1 + (g2 - g1) * ratio).toInt()
+    val b = (b1 + (b2 - b1) * ratio).toInt()
+
+    return (a shl 24) or (r shl 16) or (g shl 8) or b
+}
+
+private fun drawTechPanel(context: DrawContext, left: Int, top: Int, right: Int, bottom: Int, fill: Int, border: Int) {
+    // Main body (clipped corners)
+    context.fill(left + 2, top, right - 2, bottom, fill)
+    context.fill(left, top + 2, right, bottom - 2, fill)
+
+    // Borders
+    context.fill(left + 2, top, right - 2, top + 1, border)
+    context.fill(left + 2, bottom - 1, right - 2, bottom, border)
+    context.fill(left, top + 2, left + 1, bottom - 2, border)
+    context.fill(right - 1, top + 2, right, bottom - 2, border)
+
+    // Corners
+    context.fill(left + 1, top + 1, left + 2, top + 2, border)
+    context.fill(right - 2, top + 1, right - 1, top + 2, border)
+    context.fill(left + 1, bottom - 2, left + 2, bottom - 1, border)
+    context.fill(right - 2, bottom - 2, right - 1, bottom - 1, border)
+}
+
+private fun drawHologramPlatform(context: DrawContext, centerX: Int, centerY: Int, width: Int) {
+    val pulse = ((sin(System.currentTimeMillis() / 800.0) + 1.0) / 2.0).toFloat()
+    val color1 = mixColor(0x0045DEAA.toInt(), 0xAA45DEAA.toInt(), pulse)
+    val color2 = 0x5538B48B.toInt()
+
+    val halfW = width / 2
+    // Draw a simulated 3D elliptic or rect platform layer by layer
+    context.fill(centerX - halfW, centerY, centerX + halfW, centerY + 1, color1)
+    context.fill(centerX - halfW + 4, centerY + 1, centerX + halfW - 4, centerY + 2, color2)
+    context.fill(centerX - halfW + 10, centerY + 2, centerX + halfW - 10, centerY + 3, color1)
+}
+
+        private fun wrapText(text: String, maxWidth: Int): List<String> {
         if (text.isBlank()) return listOf("")
         val words = text.split(Regex("\\s+"))
         val lines = mutableListOf<String>()
@@ -651,12 +729,12 @@ class ElyAuthScreen(
         private val COLOR_TITLE = 0xFFF2FFF8.toInt()
         private val COLOR_SUBTITLE = 0xFF86D9C4.toInt()
         private val COLOR_TEXT = 0xFFF2FFF8.toInt()
-        private val COLOR_DIM = 0xFFD8EFE7.toInt()
-        private val COLOR_ACCENT = 0xFF54E4B0.toInt()
-        private val COLOR_SUCCESS = 0xFF7CFF9A.toInt()
+        private val COLOR_DIM = 0xFFC0DFD1.toInt()
+        private val COLOR_ACCENT = 0xFF38B48B.toInt()
+        private val COLOR_SUCCESS = 0xFF45DEAA.toInt()
         private val COLOR_WARNING = 0xFFFFE6A3.toInt()
         private val COLOR_ERROR = 0xFFFFA0A0.toInt()
-        private val COLOR_BORDER = 0xFF2D8A7B.toInt()
+        private val COLOR_BORDER = 0xFF1E654E.toInt()
     }
 }
 

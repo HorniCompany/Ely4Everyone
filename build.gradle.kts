@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "dev.ely4everyone"
-version = "0.1.0-SNAPSHOT"
+version = "0.1.0-alpha"
 
 subprojects {
     group = rootProject.group
