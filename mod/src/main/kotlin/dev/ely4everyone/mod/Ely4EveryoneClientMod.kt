@@ -27,6 +27,14 @@ class Ely4EveryoneClientMod : ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(AuthWorkflowManager::tick)
         ClientTickEvents.END_CLIENT_TICK.register(TokenHealthMonitor::tick)
 
+        // Attempt to silently refresh an expiring/expired session at boot time
+        // so the player doesn't have to re-login through browser every day
+        if (sessionState.authSessionToken != null && sessionState.relayBaseUrl.isNotBlank()) {
+            java.util.concurrent.CompletableFuture.runAsync {
+                TokenHealthMonitor.bootTimeRefresh()
+            }
+        }
+
         logger.info(
             "Ely4Everyone client initialized. relayBaseUrl={}, discoveryMode={}, preferredLoginMode={}, hasSession={}, {}",
             config.relayBaseUrl,

@@ -148,9 +148,15 @@ object AuthWorkflowManager {
                 ClientSessionStore.save(
                     currentSession.copy(
                         elyAccessToken = elyAccessToken,
-                        authSessionExpiresAt = Instant.ofEpochSecond(expiresAt)
+                        authSessionExpiresAt = Instant.ofEpochSecond(expiresAt),
+                        elyUsername = result.username ?: currentSession.elyUsername,
+                        elyUuid = result.uuid ?: currentSession.elyUuid,
+                        elyTexturesValue = result.texturesValue ?: currentSession.elyTexturesValue,
+                        elyTexturesSignature = result.texturesSignature ?: currentSession.elyTexturesSignature,
                     )
                 )
+                // Refresh the in-game identity with updated data
+                MinecraftClientSessionBridge.refreshActiveIdentity()
                 logger.info("Successfully refreshed Ely session token via auth host.")
                 true
             } else {

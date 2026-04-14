@@ -3,13 +3,16 @@ package dev.ely4everyone.velocity
 import com.google.inject.Inject
 import com.velocitypowered.api.event.Subscribe
 import com.velocitypowered.api.event.connection.PreLoginEvent
+import com.velocitypowered.api.event.player.GameProfileRequestEvent
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent
 import com.velocitypowered.api.plugin.Plugin
 import com.velocitypowered.api.plugin.annotation.DataDirectory
 import com.velocitypowered.api.proxy.ProxyServer
 import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier
+import com.velocitypowered.api.util.GameProfile
 import dev.ely4everyone.shared.host.EmbeddedAuthHttpServer
+import dev.ely4everyone.shared.host.AuthAuthority
 import dev.ely4everyone.shared.host.HttpHybridAuthUpstream
 import dev.ely4everyone.shared.host.HybridProfileResolver
 import dev.ely4everyone.shared.host.HybridSessionVerifier
@@ -17,6 +20,16 @@ import dev.ely4everyone.shared.host.PendingPremiumLoginStore
 import dev.ely4everyone.velocity.config.ProxyConfigStore
 import org.slf4j.Logger
 import java.nio.file.Path
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+
+data class GameLoginIdentity(
+    val accountType: String,
+    val authProvider: String,
+    val registrationOrigin: String,
+    val username: String,
+    val uuid: String?,
+)
 
 @Plugin(
     id = "ely4everyone",
@@ -36,6 +49,7 @@ class Ely4EveryoneVelocityPlugin @Inject constructor(
     private lateinit var sessionVerifier: HybridSessionVerifier
     private lateinit var floodgateBedrockDetector: FloodgateBedrockDetector
     private var embeddedAuthHttpServer: EmbeddedAuthHttpServer? = null
+    private val gameIdentitiesByUsername = ConcurrentHashMap<String, GameLoginIdentity>()
 
     companion object {
         val LOGIN_CHANNEL: MinecraftChannelIdentifier = MinecraftChannelIdentifier.from("ely4everyone:login")
@@ -89,6 +103,16 @@ class Ely4EveryoneVelocityPlugin @Inject constructor(
         val floodgatePlayer = floodgateBedrockDetector.findPlayer(username)
         if (floodgatePlayer != null) {
             pendingPremiumLoginStore.clear(username)
+            rememberIdentity(
+                username,
+                GameLoginIdentity(
+                    accountType = "bedrock",
+                    authProvider = "bedrock",
+                    registrationOrigin = "game_bedrock",
+                    username = floodgatePlayer.correctUsername,
+                    uuid = floodgatePlayer.bedrockUuid.toString(),
+                ),
+            )
             logger.info(
                 "Ely4Everyone: {} Bedrock Floodgate passthrough (javaUsername={}, correctUsername={}, linked={}, bedrockUuid={})",
                 username,
@@ -104,6 +128,16 @@ class Ely4EveryoneVelocityPlugin @Inject constructor(
 
         if (!decision.shouldForceOnline) {
             pendingPremiumLoginStore.clear(username)
+            rememberIdentity(
+                username,
+                GameLoginIdentity(
+                    accountType = "cracked",
+                    authProvider = "cracked",
+                    registrationOrigin = "game_cracked",
+                    username = username,
+                    uuid = clientUuid?.toString(),
+                ),
+            )
             event.result = PreLoginEvent.PreLoginComponentResult.forceOfflineMode()
             logger.info(
                 "Ely4Everyone: {} routed to OFFLINE flow (reason={}, uuid={})",
@@ -121,6 +155,9 @@ class Ely4EveryoneVelocityPlugin @Inject constructor(
             clientUuid = clientUuid,
             allowedAuthorities = decision.allowedAuthorities,
         )
+        decision.expectedProfile?.let { profile ->
+            rememberIdentity(username, identityForAuthority(profile.authority, profile.username, profile.uuid))
+        }
         event.result = PreLoginEvent.PreLoginComponentResult.forceOnlineMode()
 
         if (decision.authority != null && decision.expectedProfile != null) {
@@ -140,4 +177,114 @@ class Ely4EveryoneVelocityPlugin @Inject constructor(
             )
         }
     }
+
+    @Subscribe
+    fun onGameProfileRequest(event: GameProfileRequestEvent) {
+        val identity = gameIdentitiesByUsername[normalize(event.username)] ?: return
+        if (identity.accountType == "cracked" || identity.uuid == null) {
+            return
+        }
+
+        val expectedUuid = runCatching { UUID.fromString(identity.uuid) }.getOrNull() ?: return
+        if (event.gameProfile.id == expectedUuid) {
+            return
+        }
+
+        event.gameProfile = GameProfile(
+            expectedUuid,
+            event.gameProfile.name,
+            event.gameProfile.properties,
+        )
+
+        logger.info(
+            "Ely4Everyone: forced forwarded profile for {} to {} uuid {}",
+            event.username,
+            identity.accountType,
+            expectedUuid,
+        )
+    }
+
+    fun resolveGameIdentity(username: String, uuid: UUID?, onlineMode: Boolean): GameLoginIdentity {
+        val floodgatePlayer = floodgateBedrockDetector.findPlayer(username)
+        if (floodgatePlayer != null) {
+            return GameLoginIdentity(
+                accountType = "bedrock",
+                authProvider = "bedrock",
+                registrationOrigin = "game_bedrock",
+                username = floodgatePlayer.correctUsername,
+                uuid = floodgatePlayer.bedrockUuid.toString(),
+            ).also { rememberIdentity(username, it) }
+        }
+
+        val remembered = gameIdentitiesByUsername[normalize(username)]
+        if (remembered != null) {
+            return remembered
+        }
+
+        if (!onlineMode) {
+            return GameLoginIdentity(
+                accountType = "cracked",
+                authProvider = "cracked",
+                registrationOrigin = "game_cracked",
+                username = username,
+                uuid = uuid?.toString(),
+            ).also { rememberIdentity(username, it) }
+        }
+
+        val verifiedAuthority = uuid?.let { pendingPremiumLoginStore.findAuthorityByUuid(it.toString()) }
+        val pendingAuthority = pendingPremiumLoginStore.get(username)?.authority
+        val authority = verifiedAuthority ?: pendingAuthority
+
+        if (authority == AuthAuthority.ELY || authority == AuthAuthority.MOJANG) {
+            return identityForAuthority(authority, username, uuid).also { rememberIdentity(username, it) }
+        }
+
+        return gameIdentitiesByUsername[normalize(username)] ?: GameLoginIdentity(
+            accountType = "java",
+            authProvider = "microsoft",
+            registrationOrigin = "game_java",
+            username = username,
+            uuid = uuid?.toString(),
+        ).also { rememberIdentity(username, it) }
+    }
+
+    private fun identityForAuthority(authority: AuthAuthority, username: String, uuid: UUID?): GameLoginIdentity {
+        return when (authority) {
+            AuthAuthority.ELY -> GameLoginIdentity(
+                accountType = "ely",
+                authProvider = "elyby",
+                registrationOrigin = "game_ely",
+                username = username,
+                uuid = uuid?.toString(),
+            )
+            AuthAuthority.MOJANG -> GameLoginIdentity(
+                accountType = "java",
+                authProvider = "microsoft",
+                registrationOrigin = "game_java",
+                username = username,
+                uuid = uuid?.toString(),
+            )
+            AuthAuthority.BEDROCK -> GameLoginIdentity(
+                accountType = "bedrock",
+                authProvider = "bedrock",
+                registrationOrigin = "game_bedrock",
+                username = username,
+                uuid = uuid?.toString(),
+            )
+            AuthAuthority.OFFLINE -> GameLoginIdentity(
+                accountType = "cracked",
+                authProvider = "cracked",
+                registrationOrigin = "game_cracked",
+                username = username,
+                uuid = uuid?.toString(),
+            )
+        }
+    }
+
+    private fun rememberIdentity(username: String, identity: GameLoginIdentity) {
+        gameIdentitiesByUsername[normalize(username)] = identity
+        gameIdentitiesByUsername[normalize(identity.username)] = identity
+    }
+
+    private fun normalize(username: String): String = username.lowercase()
 }

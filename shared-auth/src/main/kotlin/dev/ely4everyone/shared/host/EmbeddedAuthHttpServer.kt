@@ -116,8 +116,9 @@ class EmbeddedAuthHttpServer(
     }
 
     private fun handleRefreshSession(exchange: HttpExchange) {
+        // Accept session_token from Authorization Bearer header (preferred) or query param (fallback)
         val params = requestParameters(exchange)
-        val sessionToken = params["session_token"]
+        val sessionToken = extractBearerToken(exchange) ?: params["session_token"]
         if (sessionToken.isNullOrBlank()) {
             writeText(exchange, 400, "text/plain; charset=utf-8", "status=failed\nerror=missing_session_token")
             return
@@ -134,22 +135,37 @@ class EmbeddedAuthHttpServer(
 
         runCatching {
             val tokenResponse = oauthClient.refreshToken(clientSession.refreshToken)
+            val newExpiresAt = Instant.now().plusSeconds(config.clientSessionTtlSeconds).epochSecond
             val updated = clientSessionStore.updateTokens(
                 sessionToken = sessionToken,
                 newElyAccessToken = tokenResponse.accessToken,
                 newRefreshToken = tokenResponse.refreshToken,
-                newExpiresAtEpochSeconds = Instant.now().plusSeconds(config.clientSessionTtlSeconds).epochSecond
+                newExpiresAtEpochSeconds = newExpiresAt,
             )
             if (updated != null) {
+                // Re-fetch textures profile with new access token
+                val texturesProfile = runCatching {
+                    oauthClient.fetchTexturesProfile(updated.uuid)
+                }.getOrNull()
+                val texturesProperty = texturesProfile?.properties?.firstOrNull { it.name == "textures" }
+
                 writeText(
                     exchange,
                     200,
                     "text/plain; charset=utf-8",
-                    """
-                    status=completed
-                    ely_access_token=${updated.elyAccessToken}
-                    exp=${updated.expiresAtEpochSeconds}
-                    """.trimIndent(),
+                    buildString {
+                        appendLine("status=completed")
+                        appendLine("ely_access_token=${updated.elyAccessToken}")
+                        appendLine("exp=${updated.expiresAtEpochSeconds}")
+                        appendLine("username=${updated.username}")
+                        appendLine("uuid=${updated.uuid}")
+                        if (texturesProperty != null) {
+                            appendLine("textures_value=${texturesProperty.value}")
+                            if (!texturesProperty.signature.isNullOrBlank()) {
+                                appendLine("textures_signature=${texturesProperty.signature}")
+                            }
+                        }
+                    }.trim(),
                 )
             } else {
                 writeText(exchange, 500, "text/plain; charset=utf-8", "status=failed\nerror=session_update_failed")
@@ -158,6 +174,12 @@ class EmbeddedAuthHttpServer(
             logger.warn("Failed to refresh token via OAuth client", exception)
             writeText(exchange, 500, "text/plain; charset=utf-8", "status=failed\nerror=${exception.message ?: "refresh_error"}")
         }
+    }
+
+    private fun extractBearerToken(exchange: HttpExchange): String? {
+        val authHeader = exchange.requestHeaders.getFirst("Authorization") ?: return null
+        if (!authHeader.startsWith("Bearer ", ignoreCase = true)) return null
+        return authHeader.substring(7).trim().takeIf { it.isNotBlank() }
     }
 
     private fun handleLatestSession(exchange: HttpExchange) {
