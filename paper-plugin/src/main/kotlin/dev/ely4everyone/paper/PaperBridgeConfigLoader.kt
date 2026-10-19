@@ -23,6 +23,7 @@ object PaperBridgeConfigLoader {
             oauthStateTtlSeconds = config.getLong("auth-host.oauth-state-ttl-seconds", 300L),
             clientSessionTtlSeconds = config.getLong("auth-host.client-session-ttl-seconds", 86400L),
             issuedTicketTtlSeconds = config.getLong("auth-host.issued-ticket-ttl-seconds", 300L),
+            allowLegacyPollLogin = config.getBoolean("auth-host.allow-legacy-poll-login", false),
         )
     }
 }

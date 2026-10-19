@@ -3,7 +3,9 @@ package dev.ely4everyone.shared.host
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import dev.ely4everyone.shared.auth.AuthProfileProperty
+import dev.ely4everyone.shared.oauth.LoopbackLogin
 import dev.ely4everyone.shared.oauth.OAuthStateStore
+import dev.ely4everyone.shared.oauth.PendingAuthSession
 import dev.ely4everyone.shared.oauth.PendingAuthStatus
 import dev.ely4everyone.shared.protocol.AuthProtocol
 import dev.ely4everyone.shared.protocol.AuthProtocolCodec
@@ -38,6 +40,11 @@ data class EmbeddedAuthHostConfig(
     val oauthStateTtlSeconds: Long = 300,
     val clientSessionTtlSeconds: Long = 86400,
     val issuedTicketTtlSeconds: Long = 300,
+    /**
+     * Lets mods older than the loopback login (0.1.0-alpha) log in by polling. Polling can be
+     * hijacked with a crafted login link, so keep this off except for a short migration window.
+     */
+    val allowLegacyPollLogin: Boolean = false,
 )
 
 data class IssuedTicketResult(
@@ -50,23 +57,52 @@ class EmbeddedAuthHttpServer(
     private val logger: Logger,
     dataDirectory: Path,
     private val pendingPremiumLoginStore: PendingPremiumLoginStore = PendingPremiumLoginStore(config.issuedTicketTtlSeconds),
-    private val profileResolver: HybridProfileResolver = HybridProfileResolver(HttpHybridAuthUpstream()),
-    private val sessionVerifier: HybridSessionVerifier = HybridSessionVerifier(HttpHybridAuthUpstream(), pendingPremiumLoginStore),
-) {
-    private val stateStore = OAuthStateStore(config.oauthStateTtlSeconds)
-    private val clientSessionStore = ClientAuthSessionStore(
-        ttlSeconds = config.clientSessionTtlSeconds,
-        storagePath = dataDirectory.resolve("client-auth-sessions.bin"),
-    )
-    private val issuedLoginTicketStore = IssuedLoginTicketStore()
-    private val oauthClient = ElyOAuthClient(
+    upstream: HybridAuthUpstream = CachingHybridAuthUpstream(HttpHybridAuthUpstream()),
+    private val profileResolver: HybridProfileResolver = HybridProfileResolver(upstream),
+    private val sessionVerifier: HybridSessionVerifier = HybridSessionVerifier(upstream, pendingPremiumLoginStore),
+    private val oauthClient: ElyOAuthGateway = ElyOAuthClient(
         OAuthClientSettings(
             publicBaseUrl = config.publicBaseUrl,
             clientId = config.clientId,
             clientSecret = config.clientSecret,
             scopes = config.oauthScopes,
         ),
+    ),
+) {
+    private companion object {
+        // Bounded so a slow upstream cannot make the proxy spawn threads without limit.
+        const val WORKER_THREADS: Int = 32
+
+        // Same limit as Mojang's batch profile API; authlib clients never send more.
+        const val MAX_BATCH_PROFILE_NAMES: Int = 10
+        const val MAX_BATCH_BODY_BYTES: Int = 4096
+
+        const val INSECURE_DEFAULT_SIGNING_KEY: String = "change-me"
+
+        // How long a finished loopback login waits for the mod to redeem its one-time code.
+        const val HANDOFF_TTL_SECONDS: Long = 120
+        const val MAX_FORM_BODY_BYTES: Int = 8192
+        const val MAX_LEGACY_STATE_LENGTH: Int = 128
+
+        const val MODRINTH_URL: String = "https://modrinth.com/mod/ely4everyone"
+
+        // 0.1.0-alpha shows this after "Авторизация не удалась: " in a box of 4 lines, about 38
+        // characters each. Minecraft renders § colour codes even in literal text. The old mod wraps
+        // by word and starts every line uncoloured, so each word carries its own code.
+        val OUTDATED_MOD_ERROR: String = listOf(
+            "§e" to "мод устарел.",
+            "§f" to "Обнови Ely4Everyone:",
+            "§b" to "modrinth.com/mod/ely4everyone",
+        ).joinToString(" ") { (code, text) -> text.split(" ").joinToString(" ") { word -> code + word } }
+        val profileUuidPattern = Regex("^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
+    }
+
+    private val stateStore = OAuthStateStore(config.oauthStateTtlSeconds)
+    private val clientSessionStore = ClientAuthSessionStore(
+        ttlSeconds = config.clientSessionTtlSeconds,
+        storagePath = dataDirectory.resolve("client-auth-sessions.bin"),
     )
+    private val issuedLoginTicketStore = IssuedLoginTicketStore()
     private var executorService: ExecutorService? = null
     private var server: HttpServer? = null
 
@@ -75,8 +111,17 @@ class EmbeddedAuthHttpServer(
             logger.info("Embedded Ely auth host is disabled in config.")
             return
         }
+        if (config.ticketSigningKey == INSECURE_DEFAULT_SIGNING_KEY) {
+            logger.warn("Embedded Ely auth host uses the default ticket signing key 'change-me'. Set a random secret in the config.")
+        }
+        if (config.allowLegacyPollLogin) {
+            logger.warn(
+                "allow_legacy_poll_login is on: anyone can hijack an Ely login with a crafted link, " +
+                    "whatever mod version the victim runs. Turn it off once players have updated.",
+            )
+        }
         val address = InetSocketAddress(config.bindHost, config.bindPort)
-        executorService = Executors.newCachedThreadPool()
+        executorService = Executors.newFixedThreadPool(WORKER_THREADS)
         server = HttpServer.create(address, 0).apply {
             executor = executorService
             createContext("/health") { exchange -> handleHealth(exchange) }
@@ -86,11 +131,11 @@ class EmbeddedAuthHttpServer(
             createContext("/api/v1/config") { exchange -> handleConfig(exchange) }
             createContext("/api/v1/auth/start") { exchange -> handleAuthStart(exchange) }
             createContext("/api/v1/auth/poll") { exchange -> handleAuthPoll(exchange) }
+            createContext("/api/v1/auth/exchange") { exchange -> handleAuthExchange(exchange) }
 
             createContext("/api/v1/auth/issue-ticket") { exchange -> handleIssueTicket(exchange) }
             createContext("/api/v1/auth/refresh") { exchange -> handleRefreshSession(exchange) }
             createContext("/api/v1/auth/dev/latest-session") { exchange -> handleLatestSession(exchange) }
-            createContext("/api/v1/dev/tickets") { exchange -> handleDevTickets(exchange) }
             createContext("/sessionserver/session/minecraft/join") { exchange -> handleSessionJoin(exchange) }
             createContext("/sessionserver/session/minecraft/hasJoined") { exchange -> handleSessionHasJoined(exchange) }
             createContext("/sessionserver/session/minecraft/profile") { exchange -> handleSessionProfile(exchange) }
@@ -116,9 +161,8 @@ class EmbeddedAuthHttpServer(
     }
 
     private fun handleRefreshSession(exchange: HttpExchange) {
-        // Accept session_token from Authorization Bearer header (preferred) or query param (fallback)
-        val params = requestParameters(exchange)
-        val sessionToken = extractBearerToken(exchange) ?: params["session_token"]
+        // Header only: a token in the URL ends up in access logs. Every released mod sends the header.
+        val sessionToken = extractBearerToken(exchange)
         if (sessionToken.isNullOrBlank()) {
             writeText(exchange, 400, "text/plain; charset=utf-8", "status=failed\nerror=missing_session_token")
             return
@@ -230,6 +274,12 @@ class EmbeddedAuthHttpServer(
             }
 
             val username = parts[5]
+            // Such a name has no premium profile anywhere. Answer "not found" (not 400): LimboAuth
+            // treats unexpected status codes as upstream errors and may force a cracked player online.
+            if (!MinecraftUsernames.isValidEly(username)) {
+                writeText(exchange, 404, "application/json; charset=utf-8", """{"error":"Not Found"}""")
+                return
+            }
             val pending = pendingPremiumLoginStore.get(username)
             val preferredAuthority = pending?.authority
             val session = clientSessionStore.findByUsername(username)
@@ -302,7 +352,7 @@ class EmbeddedAuthHttpServer(
             audience=${config.expectedAudience}
             host_id=${config.hostId}
             oauth_enabled=${isOAuthConfigured()}
-            dev_tickets_enabled=true
+            login_flow=loopback
             """.trimIndent(),
         )
     }
@@ -312,8 +362,20 @@ class EmbeddedAuthHttpServer(
             writeText(exchange, 405, "application/json; charset=utf-8", """{"error":"Method Not Allowed"}""")
             return
         }
-        val names = parseJsonStringArray(exchange.requestBody.readBytes().toString(StandardCharsets.UTF_8))
-        val profiles = names.mapNotNull { username ->
+        // Every name costs up to two upstream requests, so this public endpoint must stay small.
+        val body = exchange.requestBody.readNBytes(MAX_BATCH_BODY_BYTES + 1)
+        val names = parseJsonStringArray(body.toString(StandardCharsets.UTF_8))
+            .distinctBy { it.lowercase() }
+        if (body.size > MAX_BATCH_BODY_BYTES || names.size > MAX_BATCH_PROFILE_NAMES) {
+            writeText(
+                exchange,
+                400,
+                "application/json; charset=utf-8",
+                """{"error":"IllegalArgumentException","errorMessage":"Not more than $MAX_BATCH_PROFILE_NAMES profile names per call are allowed."}""",
+            )
+            return
+        }
+        val profiles = names.filter(MinecraftUsernames::isValidEly).mapNotNull { username ->
             val pending = pendingPremiumLoginStore.get(username)
             val lookup = profileResolver.lookup(username)
             when (pending?.authority) {
@@ -359,28 +421,85 @@ class EmbeddedAuthHttpServer(
             writeText(exchange, 400, "text/plain; charset=utf-8", "error=missing_profile_uuid")
             return
         }
+        // The path segment is forwarded into the upstream URL, so only a real UUID may pass.
+        if (!profileUuidPattern.matches(uuidPath)) {
+            writeText(exchange, 400, "text/plain; charset=utf-8", "error=invalid_profile_uuid")
+            return
+        }
         val response = sessionVerifier.fetchProfile(uuidPath, exchange.requestURI.rawQuery)
         writeResponse(exchange, response.statusCode, response.contentType, response.body)
     }
 
+    /**
+     * Opened in the player's browser by the mod. A current mod sends a PKCE challenge and its
+     * loopback address; a request without them comes from an old, polling mod.
+     */
     private fun handleAuthStart(exchange: HttpExchange) {
-        val state = requestParameters(exchange)["state"]
-        if (state.isNullOrBlank()) {
-            writeText(exchange, 400, "text/plain; charset=utf-8", "error=missing_state")
+        val params = requestParameters(exchange)
+        val state = params["state"]
+        if (state.isNullOrBlank() || state.length > MAX_LEGACY_STATE_LENGTH) {
+            writeHtml(exchange, 400, "<h1>Ely4Everyone</h1><p>Invalid login request.</p>")
             return
         }
         if (!isOAuthConfigured()) {
-            writeText(exchange, 503, "text/plain; charset=utf-8", "error=oauth_not_configured")
+            writeHtml(exchange, 503, "<h1>Ely4Everyone</h1><p>Ely.by login is not configured on this server.</p>")
             return
         }
-        stateStore.create(state)
+        val codeChallenge = params["code_challenge"]
+        if (codeChallenge == null) {
+            startLegacyPollLogin(exchange, state)
+            return
+        }
+
+        val redirectUri = LoopbackLogin.parseRedirectUri(params["client_redirect_uri"])
+        val method = params["code_challenge_method"] ?: LoopbackLogin.CHALLENGE_METHOD
+        if (!LoopbackLogin.isWellFormedToken(state) ||
+            !LoopbackLogin.isWellFormedToken(codeChallenge) ||
+            method != LoopbackLogin.CHALLENGE_METHOD ||
+            redirectUri == null
+        ) {
+            writeHtml(exchange, 400, "<h1>Ely4Everyone</h1><p>Invalid login request.</p>")
+            return
+        }
+        if (stateStore.create(state, codeChallenge = codeChallenge, clientRedirectUri = redirectUri.toString()) == null) {
+            refuseStart(exchange, state)
+            return
+        }
         redirect(exchange, oauthClient.buildAuthorizationUri(state))
     }
 
+    private fun refuseStart(exchange: HttpExchange, state: String) {
+        if (stateStore.get(state) != null) {
+            writeHtml(exchange, 409, "<h1>Ely4Everyone</h1><p>This login link was already used. Start the login again from Minecraft.</p>")
+        } else {
+            writeHtml(exchange, 503, "<h1>Ely4Everyone</h1><p>Too many logins are in progress. Try again in a few minutes.</p>")
+        }
+    }
+
+    private fun startLegacyPollLogin(exchange: HttpExchange, state: String) {
+        if (!config.allowLegacyPollLogin) {
+            // Polling for the result cannot be made safe, so old mods are refused. Nothing is
+            // stored (refusals must not use up login capacity); the poll answers statelessly.
+            writeOutdatedModPage(exchange)
+            return
+        }
+        if (stateStore.create(state) == null) {
+            refuseStart(exchange, state)
+            return
+        }
+        redirect(exchange, oauthClient.buildAuthorizationUri(state))
+    }
+
+    /** Legacy result channel for old mods. Loopback logins never hand out tokens here. */
     private fun handleAuthPoll(exchange: HttpExchange) {
         val state = requestParameters(exchange)["state"]
         if (state.isNullOrBlank()) {
             writeText(exchange, 400, "text/plain; charset=utf-8", "status=failed\nerror=missing_state")
+            return
+        }
+        // Current mods never poll, so with legacy login off every poll comes from an old mod.
+        if (!config.allowLegacyPollLogin) {
+            writeText(exchange, 200, "text/plain; charset=utf-8", "status=failed\nerror=$OUTDATED_MOD_ERROR")
             return
         }
         val session = stateStore.get(state)
@@ -388,28 +507,79 @@ class EmbeddedAuthHttpServer(
             writeText(exchange, 404, "text/plain; charset=utf-8", "status=failed\nerror=unknown_state")
             return
         }
-        val body = when (session.status) {
-            PendingAuthStatus.PENDING -> "status=pending"
-            PendingAuthStatus.FAILED -> "status=failed\nerror=${session.error.orEmpty()}"
-            PendingAuthStatus.COMPLETED -> """
-                status=completed
-                auth_session_token=${session.authSessionToken.orEmpty()}
-                ely_access_token=${session.elyAccessToken.orEmpty()}
-                username=${session.username.orEmpty()}
-                uuid=${session.uuid.orEmpty()}
-                exp=${session.expiresAtEpochSeconds}
-                textures_value=${session.texturesValue.orEmpty()}
-                textures_signature=${session.texturesSignature.orEmpty()}
-            """.trimIndent()
+        if (session.isLoopback) {
+            writeText(exchange, 400, "text/plain; charset=utf-8", "status=failed\nerror=wrong_login_flow")
+            return
         }
-        writeText(exchange, 200, "text/plain; charset=utf-8", body)
+        when (session.status) {
+            PendingAuthStatus.PENDING, PendingAuthStatus.EXCHANGING ->
+                writeText(exchange, 200, "text/plain; charset=utf-8", "status=pending")
+            PendingAuthStatus.FAILED ->
+                writeText(exchange, 200, "text/plain; charset=utf-8", "status=failed\nerror=${session.error.orEmpty()}")
+            PendingAuthStatus.COMPLETED -> {
+                // Hand the tokens out once, so a state leaked through a shared log is useless afterwards.
+                val consumed = stateStore.consumeIf(state) { it.status == PendingAuthStatus.COMPLETED && !it.isLoopback }
+                if (consumed == null) {
+                    writeText(exchange, 404, "text/plain; charset=utf-8", "status=failed\nerror=unknown_state")
+                } else {
+                    writeText(exchange, 200, "text/plain; charset=utf-8", completedLoginBody(consumed))
+                }
+            }
+        }
     }
+
+    /**
+     * The mod redeems the one-time code it got on its loopback address. It must also present the
+     * PKCE verifier, so a code that leaked (browser history, another local program) is useless.
+     */
+    private fun handleAuthExchange(exchange: HttpExchange) {
+        if (!exchange.requestMethod.equals("POST", ignoreCase = true)) {
+            writeText(exchange, 405, "text/plain; charset=utf-8", "status=failed\nerror=method_not_allowed")
+            return
+        }
+        // Body only: secrets must not end up in URLs and access logs.
+        val params = parseQuery(readFormBody(exchange))
+        val state = params["state"]
+        val code = params["code"]
+        val verifier = params["code_verifier"]
+        if (state.isNullOrBlank() || code.isNullOrBlank() || verifier.isNullOrBlank()) {
+            writeText(exchange, 400, "text/plain; charset=utf-8", "status=failed\nerror=invalid_request")
+            return
+        }
+        val session = stateStore.consumeIf(state) { candidate ->
+            val handoffCode = candidate.handoffCode
+            val challenge = candidate.codeChallenge
+            candidate.status == PendingAuthStatus.COMPLETED &&
+                handoffCode != null &&
+                challenge != null &&
+                LoopbackLogin.constantTimeEquals(handoffCode, code) &&
+                LoopbackLogin.verifierMatches(verifier, challenge)
+        }
+        if (session == null) {
+            writeText(exchange, 400, "text/plain; charset=utf-8", "status=failed\nerror=invalid_grant")
+            return
+        }
+        writeText(exchange, 200, "text/plain; charset=utf-8", completedLoginBody(session))
+    }
+
+    private fun completedLoginBody(session: PendingAuthSession): String = """
+        status=completed
+        auth_session_token=${session.authSessionToken.orEmpty()}
+        ely_access_token=${session.elyAccessToken.orEmpty()}
+        username=${session.username.orEmpty()}
+        uuid=${session.uuid.orEmpty()}
+        exp=${session.sessionExpiresAtEpochSeconds ?: 0}
+        textures_value=${session.texturesValue.orEmpty()}
+        textures_signature=${session.texturesSignature.orEmpty()}
+    """.trimIndent()
 
 
 
     private fun handleIssueTicket(exchange: HttpExchange) {
         val params = requestParameters(exchange)
-        val sessionToken = params["session_token"]
+        // The query form only exists for 0.1.0-alpha mods; it leaks the token into access logs.
+        val sessionToken = extractBearerToken(exchange)
+            ?: params["session_token"].takeIf { config.allowLegacyPollLogin }
         val nonce = params["nonce"]
         val audience = params["audience"] ?: config.expectedAudience
         if (sessionToken.isNullOrBlank() || nonce.isNullOrBlank()) {
@@ -436,31 +606,6 @@ class EmbeddedAuthHttpServer(
         )
     }
 
-    private fun handleDevTickets(exchange: HttpExchange) {
-        val params = requestParameters(exchange)
-        val username = params["username"]
-        val uuid = params["uuid"]
-        val audience = params["audience"] ?: config.expectedAudience
-        val nonce = params["nonce"] ?: UUID.randomUUID().toString()
-        if (username.isNullOrBlank() || uuid.isNullOrBlank()) {
-            writeText(exchange, 400, "text/plain; charset=utf-8", "error=missing_username_or_uuid")
-            return
-        }
-        val issued = issueTicket(uuid, username, audience, nonce, emptyList())
-        writeText(
-            exchange,
-            200,
-            "text/plain; charset=utf-8",
-            """
-            status=completed
-            ticket=${issued.ticket}
-            username=$username
-            uuid=$uuid
-            exp=${issued.expiresAtEpochSeconds}
-            """.trimIndent(),
-        )
-    }
-
     private fun handleOAuthCallback(exchange: HttpExchange) {
         val params = requestParameters(exchange)
         val state = params["state"]
@@ -468,16 +613,20 @@ class EmbeddedAuthHttpServer(
             writeHtml(exchange, 400, "<h1>Ely4Everyone</h1><p>Missing OAuth state.</p>")
             return
         }
+        // Only a login that this host started and that is still waiting may continue. That also
+        // stops a replayed callback URL from minting a second session or failing a finished one.
+        val pending = stateStore.claimForExchange(state)
+        if (pending == null) {
+            writeHtml(exchange, 400, "<h1>Ely4Everyone</h1><p>This login link has expired or was already used. Start the login again from Minecraft.</p>")
+            return
+        }
         if (params["error"] != null) {
-            val error = params["error_message"] ?: params["error"].orEmpty()
-            stateStore.fail(state, error)
-            writeHtml(exchange, 400, "<h1>Ely4Everyone</h1><p>Authorization failed: ${escapeHtml(error)}</p>")
+            failLogin(exchange, pending, params["error_message"] ?: params["error"].orEmpty(), 400)
             return
         }
         val code = params["code"]
         if (code.isNullOrBlank()) {
-            stateStore.fail(state, "missing authorization code")
-            writeHtml(exchange, 400, "<h1>Ely4Everyone</h1><p>Authorization code is missing.</p>")
+            failLogin(exchange, pending, "missing authorization code", 400)
             return
         }
         runCatching {
@@ -492,30 +641,52 @@ class EmbeddedAuthHttpServer(
                 refreshToken = tokenResponse.refreshToken,
                 properties = texturesProfile.properties,
             )
-            stateStore.complete(
+            val handoffCode = if (pending.isLoopback) LoopbackLogin.newSecret() else null
+            val completed = stateStore.complete(
                 state = state,
                 authSessionToken = clientSession.sessionToken,
                 elyAccessToken = clientSession.elyAccessToken,
                 username = accountInfo.username,
                 uuid = accountInfo.uuid,
-                expiresAtEpochSeconds = clientSession.expiresAtEpochSeconds,
+                sessionExpiresAtEpochSeconds = clientSession.expiresAtEpochSeconds,
                 texturesValue = texturesProperty?.value,
                 texturesSignature = texturesProperty?.signature,
+                handoffCode = handoffCode,
+                entryTtlSeconds = if (handoffCode != null) HANDOFF_TTL_SECONDS else config.oauthStateTtlSeconds,
             )
-            writeHtml(
-                exchange,
-                200,
-                """
-                <h1>Ely4Everyone</h1>
-                <p>Authorization completed for <strong>${escapeHtml(accountInfo.username)}</strong>.</p>
-                <p>You can return to Minecraft and wait for the mod to finish polling.</p>
-                """.trimIndent(),
-            )
+            if (completed == null) {
+                // The entry expired while Ely was answering: a code sent now could never be redeemed.
+                failLogin(exchange, pending, "login timed out, try again", 400)
+                return
+            }
+            val clientRedirectUri = pending.clientRedirectUri
+            if (handoffCode != null && clientRedirectUri != null) {
+                redirect(exchange, LoopbackLogin.redirectWithCode(clientRedirectUri, state, handoffCode))
+            } else {
+                writeHtml(
+                    exchange,
+                    200,
+                    """
+                    <h1>Ely4Everyone</h1>
+                    <p>Authorization completed for <strong>${escapeHtml(accountInfo.username)}</strong>.</p>
+                    <p>You can return to Minecraft and wait for the mod to finish polling.</p>
+                    """.trimIndent(),
+                )
+            }
         }.onFailure { exception ->
-            val error = exception.message ?: exception::class.java.simpleName
-            stateStore.fail(state, error)
-            logger.warn("Failed to complete Ely OAuth callback for state {}", state, exception)
-            writeHtml(exchange, 500, "<h1>Ely4Everyone</h1><p>Authorization failed: ${escapeHtml(error)}</p>")
+            logger.warn("Failed to complete Ely OAuth callback", exception)
+            failLogin(exchange, pending, exception.message ?: exception::class.java.simpleName, 500)
+        }
+    }
+
+    /** Records the failure and tells the player: a loopback mod hears it directly, an old mod via poll. */
+    private fun failLogin(exchange: HttpExchange, pending: PendingAuthSession, error: String, statusCode: Int) {
+        stateStore.fail(pending.state, error)
+        val clientRedirectUri = pending.clientRedirectUri
+        if (clientRedirectUri != null) {
+            redirect(exchange, LoopbackLogin.redirectWithError(clientRedirectUri, pending.state, error))
+        } else {
+            writeHtml(exchange, statusCode, "<h1>Ely4Everyone</h1><p>Authorization failed: ${escapeHtml(error)}</p>")
         }
     }
 
@@ -565,13 +736,18 @@ class EmbeddedAuthHttpServer(
     private fun requestParameters(exchange: HttpExchange): Map<String, String> {
         val queryParams = parseQuery(exchange.requestURI.rawQuery)
         if (exchange.requestMethod.equals("POST", ignoreCase = true)) {
-            val body = exchange.requestBody.readBytes().toString(StandardCharsets.UTF_8)
             return LinkedHashMap<String, String>().apply {
                 putAll(queryParams)
-                putAll(parseQuery(body))
+                putAll(parseQuery(readFormBody(exchange)))
             }
         }
         return queryParams
+    }
+
+    /** Reads a form body, ignoring anything past the cap instead of buffering an unbounded upload. */
+    private fun readFormBody(exchange: HttpExchange): String {
+        val bytes = exchange.requestBody.readNBytes(MAX_FORM_BODY_BYTES)
+        return bytes.toString(StandardCharsets.UTF_8)
     }
 
     private fun parseQuery(rawQuery: String?): Map<String, String> {
@@ -624,6 +800,50 @@ class EmbeddedAuthHttpServer(
             </html>
             """.trimIndent().toByteArray(StandardCharsets.UTF_8),
         )
+    }
+
+    /** The page an old mod opens in the browser. The player sees it right after clicking "Войти". */
+    private fun writeOutdatedModPage(exchange: HttpExchange) {
+        val page = """
+            <!DOCTYPE html>
+            <html lang="ru">
+            <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Ely4Everyone: обнови мод</title>
+            <style>
+              :root { --bg: #f4f6f5; --card: #ffffff; --text: #1d2420; --dim: #5b6660; --accent: #2f9e7a; --accent-text: #ffffff; --border: #dde3e0; }
+              @media (prefers-color-scheme: dark) {
+                :root { --bg: #0f1412; --card: #171e1b; --text: #e6ece9; --dim: #9aa7a0; --accent: #38b48b; --accent-text: #0f1412; --border: #26302c; }
+              }
+              * { box-sizing: border-box; }
+              body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+                     padding: 16px; background: var(--bg); color: var(--text);
+                     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+              .card { width: 100%; max-width: 440px; background: var(--card); border: 1px solid var(--border);
+                      border-radius: 8px; padding: 28px 24px; text-align: center; }
+              h1 { font-size: 22px; margin: 8px 0 12px; }
+              p { color: var(--dim); line-height: 1.5; margin: 0 0 12px; }
+              .icon { font-size: 40px; }
+              .button { display: inline-block; margin-top: 12px; padding: 12px 22px; border-radius: 6px;
+                        background: var(--accent); color: var(--accent-text); font-weight: 600; text-decoration: none; }
+              .en { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 14px; }
+            </style>
+            </head>
+            <body>
+            <main class="card">
+              <div class="icon">🔒</div>
+              <h1>Пора обновить Ely4Everyone</h1>
+              <p>Мы поменяли вход через Ely.by, чтобы никто не мог увести твою сессию по чужой ссылке. Эта версия мода так войти уже не умеет.</p>
+              <p>Скачай новую версию, замени файл в папке <code>mods</code> и войди снова.</p>
+              <a class="button" href="$MODRINTH_URL">Скачать на Modrinth</a>
+              <p class="en">This version of Ely4Everyone can no longer log in: the login was changed so nobody can steal your session with a crafted link. Update the mod and log in again.</p>
+            </main>
+            </body>
+            </html>
+        """.trimIndent().toByteArray(StandardCharsets.UTF_8)
+        exchange.responseHeaders.add("Cache-Control", "no-store")
+        writeResponse(exchange, 400, "text/html; charset=utf-8", page)
     }
 
     private fun redirect(exchange: HttpExchange, uri: URI) {

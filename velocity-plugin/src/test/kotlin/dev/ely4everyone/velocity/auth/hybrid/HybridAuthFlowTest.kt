@@ -80,6 +80,29 @@ class HybridAuthFlowTest {
     }
 
     @Test
+    fun `resolver skips mojang lookup only when client uuid matches ely profile`() {
+        val upstream = FakeHybridAuthUpstream(
+            elyProfiles = mapOf("SameNick" to elyProfile),
+            mojangProfiles = mapOf("SameNick" to mojangProfile),
+        )
+        val resolver = HybridProfileResolver(upstream)
+
+        val elyDecision = resolver.resolvePreLogin("SameNick", elyProfile.uuid)
+
+        assertEquals(AuthAuthority.ELY, elyDecision.authority)
+        assertTrue(elyDecision.shouldForceOnline)
+        assertEquals(elyProfile, elyDecision.expectedProfile)
+        assertEquals(setOf(AuthAuthority.ELY), elyDecision.allowedAuthorities)
+        assertEquals(0, upstream.mojangLookups)
+
+        // Mojang UUID, no UUID and a random UUID still need the Mojang answer.
+        resolver.resolvePreLogin("SameNick", mojangProfile.uuid)
+        resolver.resolvePreLogin("SameNick", null)
+        resolver.resolvePreLogin("SameNick", UUID.fromString("e2960f95-b092-4ca9-b7f3-eebc3cbb0ea9"))
+        assertEquals(3, upstream.mojangLookups)
+    }
+
+    @Test
     fun `resolver routes random uuid with premium nickname to offline flow`() {
         val resolver = HybridProfileResolver(
             FakeHybridAuthUpstream(
@@ -92,6 +115,47 @@ class HybridAuthFlowTest {
 
         assertEquals(AuthAuthority.OFFLINE, decision.authority)
         assertEquals(false, decision.shouldForceOnline)
+    }
+
+    @Test
+    fun `public endpoints reject oversized batches, junk names and non-uuid profile paths`() {
+        val authServer = createServer(FakeHybridAuthUpstream(), PendingPremiumLoginStore(ttlSeconds = 30))
+        try {
+            val elevenNames = (1..11).joinToString(prefix = "[", postfix = "]") { "\"Player$it\"" }
+            val batch = httpClient().send(
+                HttpRequest.newBuilder(URI.create("${authServer.localBaseUrl()}/api/profiles/minecraft"))
+                    .POST(HttpRequest.BodyPublishers.ofString(elevenNames))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString(),
+            )
+            assertEquals(400, batch.statusCode())
+
+            val limbo = httpClient().send(
+                HttpRequest.newBuilder(URI.create("${authServer.localBaseUrl()}/api/v1/auth/limboauth/bad%22name"))
+                    .GET()
+                    .build(),
+                HttpResponse.BodyHandlers.ofString(),
+            )
+            assertEquals(404, limbo.statusCode())
+
+            val profile = httpClient().send(
+                HttpRequest.newBuilder(URI.create("${authServer.localBaseUrl()}/sessionserver/session/minecraft/profile/..%2F..%2Fapi"))
+                    .GET()
+                    .build(),
+                HttpResponse.BodyHandlers.ofString(),
+            )
+            assertEquals(400, profile.statusCode())
+
+            val devTickets = httpClient().send(
+                HttpRequest.newBuilder(URI.create("${authServer.localBaseUrl()}/api/v1/dev/tickets?username=Admin&uuid=x"))
+                    .GET()
+                    .build(),
+                HttpResponse.BodyHandlers.ofString(),
+            )
+            assertEquals(404, devTickets.statusCode())
+        } finally {
+            authServer.stop()
+        }
     }
 
     @Test
@@ -236,9 +300,15 @@ private class FakeHybridAuthUpstream(
     private val hasJoinedResponses: Map<AuthAuthority, UpstreamHttpResponse> = emptyMap(),
     private val profileResponses: Map<AuthAuthority, UpstreamHttpResponse> = emptyMap(),
 ) : HybridAuthUpstream {
+    var mojangLookups = 0
+        private set
+
     override fun lookupElyProfile(username: String): RemoteGameProfile? = elyProfiles[username]
 
-    override fun lookupMojangProfile(username: String): RemoteGameProfile? = mojangProfiles[username]
+    override fun lookupMojangProfile(username: String): RemoteGameProfile? {
+        mojangLookups++
+        return mojangProfiles[username]
+    }
 
     override fun fetchElyMetadata(): UpstreamHttpResponse {
         return UpstreamHttpResponse(

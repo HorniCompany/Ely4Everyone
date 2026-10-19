@@ -2,6 +2,8 @@ package dev.ely4everyone.velocity.config
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.SecureRandom
+import java.util.Base64
 import java.util.Properties
 import kotlin.io.path.inputStream
 
@@ -26,8 +28,15 @@ object ProxyConfigStore {
         }
 
         Files.createDirectories(dataDirectory)
+        // A fresh install gets its own secret instead of the shared "change-me" placeholder.
+        val defaults = ProxyConfig(ticketSigningKey = randomSigningKey())
         Files.newOutputStream(configPath).use { stream ->
-            ProxyConfig().toProperties().store(stream, "Ely4Everyone Velocity config")
+            defaults.toProperties().store(stream, "Ely4Everyone Velocity config")
         }
+    }
+
+    private fun randomSigningKey(): String {
+        val bytes = ByteArray(32).also(SecureRandom()::nextBytes)
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
     }
 }

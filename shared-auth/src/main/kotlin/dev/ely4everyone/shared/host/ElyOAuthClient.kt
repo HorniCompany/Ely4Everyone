@@ -31,15 +31,24 @@ data class ElyTexturesProfile(
     val properties: List<AuthProfileProperty>,
 )
 
+/** What the auth host needs from Ely.by OAuth. An interface so the login flow can be tested offline. */
+interface ElyOAuthGateway {
+    fun buildAuthorizationUri(state: String): URI
+    fun exchangeCode(code: String): ElyTokenResponse
+    fun refreshToken(refreshToken: String): ElyTokenResponse
+    fun fetchAccountInfo(accessToken: String): ElyAccountInfo
+    fun fetchTexturesProfile(uuid: String): ElyTexturesProfile
+}
+
 class ElyOAuthClient(
     private val settings: OAuthClientSettings,
-) {
+) : ElyOAuthGateway {
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
         .followRedirects(HttpClient.Redirect.NORMAL)
         .build()
 
-    fun buildAuthorizationUri(state: String): URI {
+    override fun buildAuthorizationUri(state: String): URI {
         val query = listOf(
             "client_id" to settings.clientId,
             "redirect_uri" to redirectUri(),
@@ -53,7 +62,7 @@ class ElyOAuthClient(
         return URI.create("https://account.ely.by/oauth2/v1?$query")
     }
 
-    fun exchangeCode(code: String): ElyTokenResponse {
+    override fun exchangeCode(code: String): ElyTokenResponse {
         val formBody = listOf(
             "client_id" to settings.clientId,
             "client_secret" to settings.clientSecret,
@@ -64,7 +73,7 @@ class ElyOAuthClient(
             key + "=" + URLEncoder.encode(value, StandardCharsets.UTF_8)
         }
         val response = httpClient.send(
-            HttpRequest.newBuilder(URI.create("https://account.ely.by/api/oauth2/v1/token"))
+            UpstreamHttp.request(URI.create("https://account.ely.by/api/oauth2/v1/token"))
                 .timeout(Duration.ofSeconds(15))
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .POST(HttpRequest.BodyPublishers.ofString(formBody))
@@ -85,7 +94,7 @@ class ElyOAuthClient(
         )
     }
 
-    fun refreshToken(refreshToken: String): ElyTokenResponse {
+    override fun refreshToken(refreshToken: String): ElyTokenResponse {
         val formBody = listOf(
             "client_id" to settings.clientId,
             "client_secret" to settings.clientSecret,
@@ -95,7 +104,7 @@ class ElyOAuthClient(
             key + "=" + URLEncoder.encode(value, StandardCharsets.UTF_8)
         }
         val response = httpClient.send(
-            HttpRequest.newBuilder(URI.create("https://account.ely.by/api/oauth2/v1/token"))
+            UpstreamHttp.request(URI.create("https://account.ely.by/api/oauth2/v1/token"))
                 .timeout(Duration.ofSeconds(15))
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .POST(HttpRequest.BodyPublishers.ofString(formBody))
@@ -116,9 +125,9 @@ class ElyOAuthClient(
         )
     }
 
-    fun fetchAccountInfo(accessToken: String): ElyAccountInfo {
+    override fun fetchAccountInfo(accessToken: String): ElyAccountInfo {
         val response = httpClient.send(
-            HttpRequest.newBuilder(URI.create("https://account.ely.by/api/account/v1/info"))
+            UpstreamHttp.request(URI.create("https://account.ely.by/api/account/v1/info"))
                 .timeout(Duration.ofSeconds(15))
                 .header("Authorization", "Bearer $accessToken")
                 .GET()
@@ -137,9 +146,9 @@ class ElyOAuthClient(
         )
     }
 
-    fun fetchTexturesProfile(uuid: String): ElyTexturesProfile {
+    override fun fetchTexturesProfile(uuid: String): ElyTexturesProfile {
         val response = httpClient.send(
-            HttpRequest.newBuilder(
+            UpstreamHttp.request(
                 URI.create("https://authserver.ely.by/session/profile/" + uuid.replace("-", "")),
             )
                 .timeout(Duration.ofSeconds(15))

@@ -16,3 +16,5 @@ auth-host:
   oauth-state-ttl-seconds: 300
   client-session-ttl-seconds: 86400
   issued-ticket-ttl-seconds: 300
+  # Lets mods older than the loopback login log in by polling, which can be hijacked. Migration only.
+  allow-legacy-poll-login: false

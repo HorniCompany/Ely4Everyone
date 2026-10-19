@@ -59,7 +59,7 @@ object AuthlibInjectorCompatibilityBridge {
         body: ByteArray?,
         contentType: String?,
     ) {
-        val builder = HttpRequest.newBuilder(target)
+        val builder = UpstreamHttp.request(target)
             .timeout(Duration.ofSeconds(15))
 
         if (contentType != null) {

@@ -2,19 +2,31 @@ package dev.ely4everyone.mod.auth
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import dev.ely4everyone.shared.oauth.LoopbackLogin
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
+/**
+ * Receives the end of a browser login on 127.0.0.1. The auth host redirects the player's own
+ * browser here, which is what ties the login to this machine. Only the first callback carrying
+ * the expected state is kept.
+ */
 class LocalAuthCallbackServer private constructor(
     private val expectedState: String,
     private val server: HttpServer,
+    private val executor: ExecutorService,
     val callbackUri: URI,
 ) {
     @Volatile
     private var result: LocalAuthCallbackPayload? = null
+
+    @Volatile
+    private var delivered: Boolean = false
 
     fun consumeResult(): LocalAuthCallbackPayload? {
         val current = result
@@ -24,20 +36,29 @@ class LocalAuthCallbackServer private constructor(
 
     fun stop() {
         server.stop(0)
+        executor.shutdownNow()
     }
 
     companion object {
         fun start(expectedState: String): LocalAuthCallbackServer {
-            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-            server.executor = Executors.newSingleThreadExecutor()
+            val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
+            // Daemon thread, so a forgotten server never keeps the game process alive.
+            val executor = Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "ely4everyone-login-callback").apply { isDaemon = true }
+            }
+            server.executor = executor
             val instance = LocalAuthCallbackServer(
                 expectedState = expectedState,
                 server = server,
-                callbackUri = URI.create("http://127.0.0.1:${server.address.port}/callback"),
+                executor = executor,
+                callbackUri = URI.create("http://127.0.0.1:${server.address.port}${LoopbackLogin.CALLBACK_PATH}"),
             )
-
-            server.createContext("/callback") { exchange ->
-                instance.handleCallback(exchange)
+            server.createContext(LoopbackLogin.CALLBACK_PATH) { exchange ->
+                try {
+                    instance.handleCallback(exchange)
+                } finally {
+                    exchange.close()
+                }
             }
             server.start()
             return instance
@@ -47,50 +68,47 @@ class LocalAuthCallbackServer private constructor(
     private fun handleCallback(exchange: HttpExchange) {
         val values = parseQuery(exchange.requestURI.rawQuery)
         val state = values["state"].orEmpty()
-        val payload = LocalAuthCallbackPayload(
-            state = state,
-            status = values["status"].orEmpty(),
-            authSessionToken = values["auth_session_token"],
-            elyAccessToken = values["ely_access_token"],
-            username = values["username"],
-            uuid = values["uuid"],
-            expiresAtEpochSeconds = values["exp"]?.toLongOrNull(),
-            texturesValue = values["textures_value"],
-            texturesSignature = values["textures_signature"],
-            error = values["error"],
-        )
-
-        result = if (state == expectedState) payload else payload.copy(status = "failed", error = "state_mismatch")
-
-        val body = if (result?.status == "completed") {
-            """
-            <!DOCTYPE html>
-            <html lang="en">
-            <head><meta charset="utf-8"><title>Ely4Everyone</title></head>
-            <body style="font-family: sans-serif; margin: 2rem;">
-                <h1>Ely4Everyone</h1>
-                <p>Authorization completed for ${values["username"] ?: "unknown user"}.</p>
-                <p>You can return to Minecraft.</p>
-            </body>
-            </html>
-            """.trimIndent()
+        if (!LoopbackLogin.constantTimeEquals(state, expectedState)) {
+            // Not our login (a stale tab or someone else's link): do not let it disturb this one.
+            respond(exchange, 400, "Этот вход не относится к текущей попытке. Начни вход заново из Minecraft.")
+            return
+        }
+        synchronized(this) {
+            if (delivered) {
+                respond(exchange, 200, "Вход уже обработан. Можно вернуться в Minecraft.")
+                return
+            }
+            delivered = true
+            result = LocalAuthCallbackPayload(
+                state = state,
+                code = values["code"]?.takeIf { it.isNotBlank() },
+                error = values["error"]?.takeIf { it.isNotBlank() },
+            )
+        }
+        if (values["error"].isNullOrBlank()) {
+            respond(exchange, 200, "Почти готово! Вернись в Minecraft, вход завершится сам.")
         } else {
-            """
+            respond(exchange, 200, "Вход не удался: ${values["error"]}. Вернись в Minecraft и попробуй ещё раз.")
+        }
+    }
+
+    private fun respond(exchange: HttpExchange, statusCode: Int, message: String) {
+        val body = """
             <!DOCTYPE html>
-            <html lang="en">
+            <html lang="ru">
             <head><meta charset="utf-8"><title>Ely4Everyone</title></head>
             <body style="font-family: sans-serif; margin: 2rem;">
                 <h1>Ely4Everyone</h1>
-                <p>Authorization failed: ${result?.error ?: "unknown_error"}.</p>
-                <p>You can return to Minecraft.</p>
+                <p>${escapeHtml(message)}</p>
             </body>
             </html>
-            """.trimIndent()
-        }.toByteArray(StandardCharsets.UTF_8)
-
+        """.trimIndent().toByteArray(StandardCharsets.UTF_8)
         exchange.responseHeaders.add("Content-Type", "text/html; charset=utf-8")
-        exchange.sendResponseHeaders(200, body.size.toLong())
-        exchange.responseBody.use { output -> output.write(body) }
+        // The page shows the result of a login; nothing about it should be cached or framed.
+        exchange.responseHeaders.add("Cache-Control", "no-store")
+        exchange.responseHeaders.add("Referrer-Policy", "no-referrer")
+        exchange.sendResponseHeaders(statusCode, body.size.toLong())
+        exchange.responseBody.write(body)
     }
 
     private fun parseQuery(rawQuery: String?): Map<String, String> {
@@ -113,6 +131,15 @@ class LocalAuthCallbackServer private constructor(
     }
 
     private fun decode(value: String): String {
-        return URLDecoder.decode(value, StandardCharsets.UTF_8)
+        return runCatching { URLDecoder.decode(value, StandardCharsets.UTF_8) }.getOrDefault("")
+    }
+
+    private fun escapeHtml(value: String): String {
+        return value
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&#39;")
     }
 }

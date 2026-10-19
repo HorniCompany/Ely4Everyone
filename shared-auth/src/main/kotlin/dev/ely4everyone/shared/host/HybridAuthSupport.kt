@@ -79,6 +79,30 @@ interface HybridAuthUpstream {
     ): UpstreamHttpResponse
 }
 
+/**
+ * Shared settings for every request this host makes to Ely.by / Mojang.
+ * A recognizable User-Agent lets Ely.by admins tell us apart from an anonymous bot,
+ * and a request timeout keeps a slow upstream from pinning HTTP worker threads forever.
+ */
+object UpstreamHttp {
+    const val USER_AGENT: String = "Ely4Everyone (+https://github.com/HorniCompany/Ely4Everyone)"
+    val REQUEST_TIMEOUT: Duration = Duration.ofSeconds(10)
+
+    fun request(uri: URI): HttpRequest.Builder = HttpRequest.newBuilder(uri)
+        .timeout(REQUEST_TIMEOUT)
+        .header("User-Agent", USER_AGENT)
+}
+
+object MinecraftUsernames {
+    // Mojang names are [A-Za-z0-9_]; Ely.by additionally allows '-'. The protocol caps names at 16.
+    private val elyPattern = Regex("^[A-Za-z0-9_-]{1,16}$")
+    private val mojangPattern = Regex("^[A-Za-z0-9_]{1,16}$")
+
+    fun isValidEly(username: String): Boolean = elyPattern.matches(username)
+
+    fun isValidMojang(username: String): Boolean = mojangPattern.matches(username)
+}
+
 class HttpHybridAuthUpstream(
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
@@ -86,8 +110,12 @@ class HttpHybridAuthUpstream(
         .build(),
 ) : HybridAuthUpstream {
     override fun lookupElyProfile(username: String): RemoteGameProfile? {
+        // A name that cannot exist upstream is not worth a request (and keeps it out of the JSON/URL).
+        if (!MinecraftUsernames.isValidEly(username)) {
+            return null
+        }
         val response = send(
-            HttpRequest.newBuilder(URI.create("https://authserver.ely.by/api/profiles/minecraft"))
+            UpstreamHttp.request(URI.create("https://authserver.ely.by/api/profiles/minecraft"))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString("[\"$username\"]"))
                 .build(),
@@ -101,8 +129,13 @@ class HttpHybridAuthUpstream(
     }
 
     override fun lookupMojangProfile(username: String): RemoteGameProfile? {
+        if (!MinecraftUsernames.isValidMojang(username)) {
+            return null
+        }
         val response = send(
-            HttpRequest.newBuilder(URI.create("https://api.mojang.com/users/profiles/minecraft/$username"))
+            // The current lookup endpoint; the legacy api.mojang.com/users/profiles one is known
+            // to throw random 403s, which would silently route a premium player to offline.
+            UpstreamHttp.request(URI.create("https://api.minecraftservices.com/minecraft/profile/lookup/name/$username"))
                 .GET()
                 .build(),
         )
@@ -114,7 +147,7 @@ class HttpHybridAuthUpstream(
 
     override fun fetchElyMetadata(): UpstreamHttpResponse {
         return send(
-            HttpRequest.newBuilder(URI.create("https://account.ely.by/api/authlib-injector"))
+            UpstreamHttp.request(URI.create("https://account.ely.by/api/authlib-injector"))
                 .GET()
                 .build(),
         )
@@ -141,7 +174,7 @@ class HttpHybridAuthUpstream(
             else -> error("Unsupported authority for hasJoined: $authority")
         }
         return send(
-            HttpRequest.newBuilder(URI.create(target))
+            UpstreamHttp.request(URI.create(target))
                 .GET()
                 .build(),
         )
@@ -159,7 +192,7 @@ class HttpHybridAuthUpstream(
             else -> error("Unsupported authority for profile fetch: $authority")
         }
         return send(
-            HttpRequest.newBuilder(URI.create(target))
+            UpstreamHttp.request(URI.create(target))
                 .GET()
                 .build(),
         )
@@ -176,7 +209,7 @@ class HttpHybridAuthUpstream(
             else -> error("Unsupported authority for join: $authority")
         }
         return send(
-            HttpRequest.newBuilder(URI.create(target))
+            UpstreamHttp.request(URI.create(target))
                 .header("Content-Type", contentType)
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                 .build(),
@@ -214,7 +247,18 @@ class HybridProfileResolver(
             )
         }
 
-        val lookup = lookup(username)
+        // Ely is asked first. If the client already presents its Ely UUID, the exact match
+        // below would pick Ely no matter what Mojang says, so skip the Mojang round trip
+        // (100-400 ms, and Ely players stop depending on Mojang being up).
+        val elyProfile = upstream.lookupElyProfile(username)
+        if (elyProfile != null && clientUuid == elyProfile.uuid) {
+            return premiumDecision(elyProfile)
+        }
+
+        val lookup = HybridLookupResult(
+            elyProfile = elyProfile,
+            mojangProfile = upstream.lookupMojangProfile(username),
+        )
         val availableAuthorities = buildSet {
             if (lookup.elyProfile != null) add(AuthAuthority.ELY)
             if (lookup.mojangProfile != null) add(AuthAuthority.MOJANG)
@@ -232,12 +276,7 @@ class HybridProfileResolver(
             else -> null
         }
         if (exactMatch != null) {
-            return HybridPreLoginDecision(
-                authority = exactMatch.authority,
-                shouldForceOnline = true,
-                expectedProfile = exactMatch,
-                allowedAuthorities = setOf(exactMatch.authority),
-            )
+            return premiumDecision(exactMatch)
         }
 
         // Some cracked launchers send a random UUIDv4 instead of the canonical
@@ -252,12 +291,7 @@ class HybridProfileResolver(
 
         val singleProfile = lookup.elyProfile ?: lookup.mojangProfile
         if (availableAuthorities.size == 1 && singleProfile != null) {
-            return HybridPreLoginDecision(
-                authority = singleProfile.authority,
-                shouldForceOnline = true,
-                expectedProfile = singleProfile,
-                allowedAuthorities = setOf(singleProfile.authority),
-            )
+            return premiumDecision(singleProfile)
         }
 
         return HybridPreLoginDecision(
@@ -265,6 +299,15 @@ class HybridProfileResolver(
             shouldForceOnline = true,
             expectedProfile = null,
             allowedAuthorities = availableAuthorities,
+        )
+    }
+
+    private fun premiumDecision(profile: RemoteGameProfile): HybridPreLoginDecision {
+        return HybridPreLoginDecision(
+            authority = profile.authority,
+            shouldForceOnline = true,
+            expectedProfile = profile,
+            allowedAuthorities = setOf(profile.authority),
         )
     }
 }

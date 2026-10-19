@@ -20,6 +20,7 @@ data class PaperBridgeConfig(
     val oauthStateTtlSeconds: Long,
     val clientSessionTtlSeconds: Long,
     val issuedTicketTtlSeconds: Long,
+    val allowLegacyPollLogin: Boolean,
 ) {
     fun toEmbeddedAuthHostConfig(hostId: String = "paper-embedded"): EmbeddedAuthHostConfig {
         return EmbeddedAuthHostConfig(
@@ -38,6 +39,7 @@ data class PaperBridgeConfig(
             oauthStateTtlSeconds = oauthStateTtlSeconds,
             clientSessionTtlSeconds = clientSessionTtlSeconds,
             issuedTicketTtlSeconds = issuedTicketTtlSeconds,
+            allowLegacyPollLogin = allowLegacyPollLogin,
         )
     }
 }

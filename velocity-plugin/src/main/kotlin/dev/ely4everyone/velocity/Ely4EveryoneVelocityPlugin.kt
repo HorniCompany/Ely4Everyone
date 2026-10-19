@@ -13,6 +13,7 @@ import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier
 import com.velocitypowered.api.util.GameProfile
 import dev.ely4everyone.shared.host.EmbeddedAuthHttpServer
 import dev.ely4everyone.shared.host.AuthAuthority
+import dev.ely4everyone.shared.host.CachingHybridAuthUpstream
 import dev.ely4everyone.shared.host.HttpHybridAuthUpstream
 import dev.ely4everyone.shared.host.HybridProfileResolver
 import dev.ely4everyone.shared.host.HybridSessionVerifier
@@ -60,7 +61,7 @@ class Ely4EveryoneVelocityPlugin @Inject constructor(
         ProxyConfigStore.saveDefaultsIfMissing(dataDirectory)
         config = ProxyConfigStore.load(dataDirectory)
 
-        val upstream = HttpHybridAuthUpstream()
+        val upstream = CachingHybridAuthUpstream(HttpHybridAuthUpstream())
         pendingPremiumLoginStore = PendingPremiumLoginStore(ttlSeconds = config.issuedTicketTtlSeconds)
         profileResolver = HybridProfileResolver(upstream)
         sessionVerifier = HybridSessionVerifier(upstream, pendingPremiumLoginStore)
@@ -72,6 +73,7 @@ class Ely4EveryoneVelocityPlugin @Inject constructor(
             logger = logger,
             dataDirectory = dataDirectory,
             pendingPremiumLoginStore = pendingPremiumLoginStore,
+            upstream = upstream,
             profileResolver = profileResolver,
             sessionVerifier = sessionVerifier,
         ).also { authServer ->

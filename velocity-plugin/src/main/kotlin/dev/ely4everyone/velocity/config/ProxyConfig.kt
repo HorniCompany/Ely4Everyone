@@ -20,6 +20,7 @@ data class ProxyConfig(
     val oauthStateTtlSeconds: Long = 300,
     val clientSessionTtlSeconds: Long = 86400,
     val issuedTicketTtlSeconds: Long = 300,
+    val allowLegacyPollLogin: Boolean = false,
 ) {
     fun toEmbeddedAuthHostConfig(hostId: String = "velocity-embedded"): EmbeddedAuthHostConfig {
         return EmbeddedAuthHostConfig(
@@ -38,6 +39,7 @@ data class ProxyConfig(
             oauthStateTtlSeconds = oauthStateTtlSeconds,
             clientSessionTtlSeconds = clientSessionTtlSeconds,
             issuedTicketTtlSeconds = issuedTicketTtlSeconds,
+            allowLegacyPollLogin = allowLegacyPollLogin,
         )
     }
 
@@ -58,6 +60,7 @@ data class ProxyConfig(
         props.setProperty("oauth_state_ttl_seconds", oauthStateTtlSeconds.toString())
         props.setProperty("client_session_ttl_seconds", clientSessionTtlSeconds.toString())
         props.setProperty("issued_ticket_ttl_seconds", issuedTicketTtlSeconds.toString())
+        props.setProperty("allow_legacy_poll_login", allowLegacyPollLogin.toString())
     }
 
     companion object {
@@ -78,6 +81,7 @@ data class ProxyConfig(
             oauthStateTtlSeconds = properties.getProperty("oauth_state_ttl_seconds", "300").toLongOrNull() ?: 300L,
             clientSessionTtlSeconds = properties.getProperty("client_session_ttl_seconds", "86400").toLongOrNull() ?: 86400L,
             issuedTicketTtlSeconds = properties.getProperty("issued_ticket_ttl_seconds", "300").toLongOrNull() ?: 300L,
+            allowLegacyPollLogin = properties.getProperty("allow_legacy_poll_login", "false").toBooleanStrictOrNull() ?: false,
         )
     }
 }

@@ -1,11 +1,13 @@
 package dev.ely4everyone.mod.auth
 
+import dev.ely4everyone.shared.oauth.LoopbackLogin
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
+import java.time.Duration
 import java.util.concurrent.CompletableFuture
 
 data class AuthPollResult(
@@ -20,6 +22,11 @@ data class AuthPollResult(
     val error: String? = null,
 )
 
+data class AuthHostLoginSupport(
+    val oauthEnabled: Boolean,
+    val loopbackLogin: Boolean,
+)
+
 data class IssuedLoginTicketResult(
     val ticket: String?,
     val expiresAtEpochSeconds: Long?,
@@ -27,31 +34,62 @@ data class IssuedLoginTicketResult(
 )
 
 object AuthHostClient {
-    private val httpClient: HttpClient = HttpClient.newHttpClient()
+    // A slow or dead auth host must fail the request, not hang it until the OS gives up.
+    private val REQUEST_TIMEOUT: Duration = Duration.ofSeconds(15)
+    private val httpClient: HttpClient = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(10))
+        .build()
 
-    fun buildStartUri(relayBaseUrl: String, state: String, clientRedirectUri: String?): URI {
+    /**
+     * Asks the host whether it can do the loopback login at all. A host from before it would
+     * accept the start link but never send the browser back, leaving the player waiting.
+     */
+    fun fetchLoginSupport(relayBaseUrl: String): AuthHostLoginSupport {
+        val request = HttpRequest.newBuilder(URI.create(relayBaseUrl.trimEnd('/') + "/api/v1/config"))
+            .timeout(REQUEST_TIMEOUT)
+            .GET()
+            .build()
+        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+        if (response.statusCode() != 200) {
+            throw IllegalStateException("HTTP ${response.statusCode()}")
+        }
+        val values = parseLines(response.body().trim())
+        return AuthHostLoginSupport(
+            oauthEnabled = values["oauth_enabled"] == "true",
+            loopbackLogin = values["login_flow"] == "loopback",
+        )
+    }
+
+    /** The page the player's browser opens. Carries only public values: state, challenge, loopback address. */
+    fun buildStartUri(relayBaseUrl: String, state: String, codeChallenge: String, clientRedirectUri: URI): URI {
         return URI.create(
             buildString {
                 append(relayBaseUrl.trimEnd('/'))
                 append("/api/v1/auth/start?state=")
                 append(encode(state))
-                if (!clientRedirectUri.isNullOrBlank()) {
-                    append("&client_redirect_uri=")
-                    append(encode(clientRedirectUri))
-                }
+                append("&code_challenge=")
+                append(encode(codeChallenge))
+                append("&code_challenge_method=")
+                append(LoopbackLogin.CHALLENGE_METHOD)
+                append("&client_redirect_uri=")
+                append(encode(clientRedirectUri.toString()))
             },
         )
     }
 
-    fun poll(relayBaseUrl: String, state: String): AuthPollResult {
-        val request = HttpRequest.newBuilder(
-            URI.create(relayBaseUrl.trimEnd('/') + "/api/v1/auth/poll?state=" + encode(state)),
-        ).GET().build()
+    /** Redeems the one-time code from the loopback callback. Secrets travel in the body, never the URL. */
+    fun exchangeCode(relayBaseUrl: String, state: String, code: String, codeVerifier: String): AuthPollResult {
+        val form = "state=${encode(state)}&code=${encode(code)}&code_verifier=${encode(codeVerifier)}"
+        val request = HttpRequest.newBuilder(URI.create(relayBaseUrl.trimEnd('/') + "/api/v1/auth/exchange"))
+            .timeout(REQUEST_TIMEOUT)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .POST(HttpRequest.BodyPublishers.ofString(form))
+            .build()
 
         val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
         val values = parsePayload(response.body())
         return AuthPollResult(
-            status = values["status"] ?: if (response.statusCode() == 404) "failed" else "pending",
+            status = values["status"] ?: "failed",
             authSessionToken = values["auth_session_token"],
             elyAccessToken = values["ely_access_token"],
             username = values["username"],
@@ -71,9 +109,7 @@ object AuthHostClient {
     ): CompletableFuture<IssuedLoginTicketResult> {
         val uri = buildString {
             append(relayBaseUrl.trimEnd('/'))
-            append("/api/v1/auth/issue-ticket?session_token=")
-            append(encode(authSessionToken))
-            append("&nonce=")
+            append("/api/v1/auth/issue-ticket?nonce=")
             append(encode(nonce))
             if (!audience.isNullOrBlank()) {
                 append("&audience=")
@@ -81,7 +117,12 @@ object AuthHostClient {
             }
         }
 
-        val request = HttpRequest.newBuilder(URI.create(uri)).GET().build()
+        // The session token goes in a header: a URL ends up in the host's access logs.
+        val request = HttpRequest.newBuilder(URI.create(uri))
+            .timeout(REQUEST_TIMEOUT)
+            .header("Authorization", "Bearer $authSessionToken")
+            .GET()
+            .build()
         return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
             .thenApply { response ->
                 val values = parsePayload(response.body())
@@ -97,6 +138,7 @@ object AuthHostClient {
         val request = HttpRequest.newBuilder(
             URI.create(relayBaseUrl.trimEnd('/') + "/api/v1/auth/refresh"),
         )
+            .timeout(REQUEST_TIMEOUT)
             .header("Authorization", "Bearer $sessionToken")
             .POST(HttpRequest.BodyPublishers.noBody())
             .build()

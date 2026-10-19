@@ -27,13 +27,18 @@ Plugin инициирует login challenge на стадии логина. Кл
 
 ### 1. Предварительный Ely login
 
-До подключения к серверу мод должен получить клиентскую Ely auth session через встроенный auth-host:
+До подключения к серверу мод должен получить клиентскую Ely auth session через встроенный auth-host. Вход сделан по RFC 8252 (loopback redirect) + PKCE (RFC 7636), реализация в `shared-auth/.../oauth/LoopbackLogin.kt`:
 
-1. игрок выбирает auth-host;
-2. мод открывает браузер;
-3. embedded auth-host в `velocity-plugin` или standalone `paper-bridge` завершает OAuth code flow;
-4. auth-host выдает `auth_session_token`;
-5. мод хранит клиентскую session локально до истечения TTL.
+1. мод генерирует `state` и `code_verifier` (по 32 случайных байта, base64url) и поднимает `LocalAuthCallbackServer` на `127.0.0.1:<случайный порт>`;
+2. мод открывает в браузере `GET /api/v1/auth/start?state=...&code_challenge=BASE64URL(SHA256(verifier))&code_challenge_method=S256&client_redirect_uri=http://127.0.0.1:<port>/callback`;
+3. auth-host принимает только `http://127.0.0.1:<port>/callback` или `http://[::1]:<port>/callback` (без query, fragment и userinfo), запоминает вход (один `state` нельзя использовать дважды) и отправляет браузер в Ely OAuth;
+4. `GET /oauth/callback` от Ely: auth-host обменивает Ely-код, создаёт клиентскую session и редиректит **браузер игрока** на его loopback-адрес с `state` и одноразовым `code` (живёт 120 с). Токены через браузер не передаются. При ошибке туда же уходит `error`;
+5. мод проверяет `state` и делает `POST /api/v1/auth/exchange` (form body: `state`, `code`, `code_verifier`). Auth-host один раз отдаёт `auth_session_token`, Ely access token и профиль;
+6. мод хранит клиентскую session локально до истечения TTL.
+
+Почему не опрос: раньше мод опрашивал `GET /api/v1/auth/poll?state=...`, и токены получал любой, кто знает `state`. Ссылку входа может сделать кто угодно, так что фишинговая ссылка отдавала сессию жертвы автору ссылки. Сейчас одноразовый код попадает только на 127.0.0.1 того компьютера, где игрок подтвердил вход, и без verifier'а из мода он бесполезен.
+
+Старые моды (запрос `start` без `code_challenge`) по умолчанию получают отказ с просьбой обновиться. Ключ `allow_legacy_poll_login` (Velocity) / `auth-host.allow-legacy-poll-login` (Paper) временно возвращает старый вход на время миграции. Тогда `poll` отдаёт токены один раз.
 
 ### 2. Server join
 
@@ -54,10 +59,10 @@ Plugin инициирует login challenge на стадии логина. Кл
 - `GET /api/v2/discovery`
 - `GET /api/v1/config`
 - `GET /api/v1/auth/start`
-- `GET /api/v1/auth/poll`
+- `POST /api/v1/auth/exchange`
+- `GET /api/v1/auth/poll` (только старые моды, при включённом `allow_legacy_poll_login`)
 - `GET /api/v1/auth/dev/latest-session`
 - `GET /api/v1/auth/issue-ticket`
-- `POST /api/v1/dev/tickets`
 - `GET /oauth/callback`
 
 ## Discovery Document
