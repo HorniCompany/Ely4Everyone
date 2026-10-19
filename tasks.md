@@ -199,9 +199,10 @@
   - `proxy-auth-setup.md` написан вокруг FastLogin и советует `-javaagent:authlib-injector.jar=https://ely.by`. README направляет javaagent на `127.0.0.1:18086`, а порт по умолчанию 8085. Ссылка из `README.md:48` на доки по self-host ведёт в никуда.
 - [ ] **6.4 Честные заявления в README и на Modrinth** (S, medium) - версии, authlib-injector, «работает на любых серверах» (см. 0.4).
 - [ ] **6.5 Мусор и приватные заметки в публичном репо** (S, medium)
-  - Скомпилированный `com/github/games647/fastlogin/velocity/listener/ConnectListener.class` в корне. Устаревший `dc.yml`.
+  - [x] Скомпилированный `com/github/games647/fastlogin/velocity/listener/ConnectListener.class` в корне - вычищен из всей истории 2026-10-19.
+  - Устаревший `dc.yml`.
   - `AGENTS.md` есть в `.gitignore`, но отслеживается. В нём заметки про sudo на всех серверах.
-  - **`.agents/workflows/deploy.md` светит Tailscale IP домашнего ПК и локальные пути.** IP не маршрутизируется из интернета, но публичным ему быть незачем (и в истории git он останется).
+  - [x] `.agents/workflows/deploy.md` (Tailscale IP и локальные пути) и папка `mod/D:/Games/...` с jar'ами - вычищены из всей истории и тегов 2026-10-19, `.agents/` в `.gitignore`.
 - [ ] **6.6 Страница на Modrinth** (S, medium)
   - Бейдж CI ведёт на `Cokeef/Ely4Everyone`, а репо `HorniCompany/Ely4Everyone`. Ссылка `./LICENSE` на Modrinth битая.
   - Одна картинка в галерее, теглайн «Quality of life ely.by mode». Нужен понятный теглайн (например, «Ely.by login and skins in any launcher»), скриншоты, короткое видео.
