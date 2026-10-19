@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <title>Ely4Everyone</title>
+  <defs>
+    <linearGradient id="bg" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="126.87" y2="129.11">
+      <stop offset="0" stop-color="#a6eeaf"/>
+      <stop offset="0.07" stop-color="#a4eeb0"/>
+      <stop offset="0.19" stop-color="#a3e9bb"/>
+      <stop offset="0.23" stop-color="#a2e8bc"/>
+      <stop offset="0.5" stop-color="#a5ddd6"/>
+      <stop offset="0.61" stop-color="#8fcbe4"/>
+      <stop offset="0.68" stop-color="#7fbbf0"/>
+      <stop offset="1" stop-color="#3683cf"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" fill="url(#bg)"/>
+  <path fill="#037b4e" d="M45.44 34.56H82.56a2.16 2.16 0 0 1 2.16 2.16V43a2.16 2.16 0 0 1 -2.16 2.16H56.39V58.72H79.91a2.16 2.16 0 0 1 2.16 2.16V67.12a2.16 2.16 0 0 1 -2.16 2.16H56.39V82.84H82.56a2.16 2.16 0 0 1 2.16 2.16V91.28a2.16 2.16 0 0 1 -2.16 2.16H45.44a2.16 2.16 0 0 1 -2.16 -2.16V36.72a2.16 2.16 0 0 1 2.16 -2.16Z"/>
+</svg>
