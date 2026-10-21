@@ -75,10 +75,10 @@
   - На проксе нет try/catch вокруг запросов. Исключение или таймаут Ely в PreLogin не даёт дойти до Mojang. В hasJoined исключение Ely прерывает цикл до Mojang. Пока Ely лежит, Mojang-игроки и cracked с случайным UUID тоже не входят, ожидая до 10 с на запрос.
   - Как чинить: ловить по каждому источнику, идти к следующему, явно решить политику на время сбоя (fail-open может пустить cracked на премиум-ник, нужны тесты).
   - Код: `shared-auth/.../host/HybridAuthSupport.kt` (`send()`, `resolvePreLogin`, цикл hasJoined).
-- [ ] **1.5 Release Sync в CI падает на каждом пуше с апреля** (S, high)
-  - `release.yml` копирует `*-0.1.0-SNAPSHOT.jar`, а версия проекта `0.1.0-alpha`. Если бы он работал, он бы через `--clobber` молча перезаписывал файлы последнего релиза на каждом пуше в main.
-  - Как чинить: релизы по тегу, версия из Gradle, Paper jar в релиз (если он остаётся), не хардкодить версию в `@Plugin`.
-  - Код: `.github/workflows/release.yml:3-6,38-40,59`, `build.gradle.kts:8`.
+- [x] **1.5 Release Sync в CI падает на каждом пуше с апреля** (S, high) - решено 2026-10-22.
+  - `release.yml` копировал `*-0.1.0-SNAPSHOT.jar`, а версия проекта `0.1.0-alpha`. Если бы он работал, он бы через `--clobber` молча перезаписывал файлы последнего релиза на каждом пуше в main.
+  - Решение Никиты: релизы с его ПК, а не в GitHub Actions. `release.yml` удалён, вместо него `scripts/release.py`: версия из Gradle, заметки из `changelog/<версия>.md`, GitHub-релиз и Modrinth (тот же jar, что в GitHub-релизе). Токен `PAT_MODRINTH` из `~/.env`. `ci.yml` (тесты на пуш) остался.
+  - Осталось: не хардкодить версию в `@Plugin` Velocity.
 
 ## 2. Новые версии Minecraft 🟡
 
