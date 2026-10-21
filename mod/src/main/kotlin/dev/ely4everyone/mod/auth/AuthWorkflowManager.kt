@@ -1,15 +1,13 @@
 package dev.ely4everyone.mod.auth
 
 import dev.ely4everyone.mod.Ely4EveryoneClientMod
-import dev.ely4everyone.mod.config.ModConfigStore
 import dev.ely4everyone.mod.identity.MinecraftClientSessionBridge
 import dev.ely4everyone.mod.session.ClientSessionState
 import dev.ely4everyone.mod.session.ClientSessionStore
-import dev.ely4everyone.shared.oauth.LoopbackLogin
 import net.minecraft.client.MinecraftClient
 import net.minecraft.util.Util
 import org.slf4j.LoggerFactory
-import java.io.IOException
+import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.CompletableFuture
 
@@ -24,45 +22,64 @@ enum class AuthFlowStatus {
 data class AuthFlowState(
     val status: AuthFlowStatus = AuthFlowStatus.IDLE,
     val message: String = "Готов к входу через Ely.by",
+    /** Code the player confirms on Ely.by while [status] is [AuthFlowStatus.POLLING]. */
+    val userCode: String? = null,
+    /** Where to type [userCode] by hand, e.g. from a phone. */
+    val verificationUri: String? = null,
 )
 
 /**
- * Browser login: the auth host sends the player's browser back to [LocalAuthCallbackServer] on
- * 127.0.0.1 with a one-time code, which is redeemed together with a PKCE verifier that never
- * leaves this process. See [LoopbackLogin] for why the old "poll the host" flow was dropped.
+ * Login straight against Ely.by with the device code grant, see [ElyDirectLogin].
+ *
+ * The browser opens on account.ely.by with the code already filled in, the player confirms, and
+ * [tick] keeps asking Ely whether the code was confirmed. The screen also shows the code, so the
+ * player can confirm it from another device if the browser did not open.
+ *
+ * Sessions made by older versions through an auth host keep working: [refreshSession] still renews
+ * them through that host until the player logs in again.
  */
 object AuthWorkflowManager {
     private val logger = LoggerFactory.getLogger("${Ely4EveryoneClientMod.MOD_ID}/auth")
 
-    // A browser tab the player abandoned must not keep the login "in progress" forever.
-    private const val LOGIN_TIMEOUT_MS: Long = 5 * 60 * 1000
+    // RFC 8628: on slow_down the client must poll at least 5 seconds less often.
+    private const val SLOW_DOWN_STEP_MS: Long = 5_000
+
+    // Without an expiry from Ely the token still has to expire somewhere; a refresh renews it.
+    private val FALLBACK_TOKEN_LIFETIME: Duration = Duration.ofDays(30)
+
+    /** One login attempt. A new attempt gets a new object, so late results of an old one are ignored. */
+    private class DeviceAttempt(
+        val code: ElyDeviceCode,
+        var intervalMs: Long,
+        val expiresAtMillis: Long,
+        var nextPollAtMillis: Long,
+        var pollInFlight: Boolean = false,
+    )
+
+    private sealed interface PollOutcome {
+        data object Wait : PollOutcome
+        data object SlowDown : PollOutcome
+        data class Done(val tokens: ElyTokens, val profile: ElyProfile) : PollOutcome
+        data class Error(val message: String) : PollOutcome
+    }
 
     @Volatile
     private var state: AuthFlowState = AuthFlowState()
 
+    /** Set while a login is starting or waiting; [attempt] is null until Ely hands out a code. */
     @Volatile
-    private var pendingStateId: String? = null
-
-    /** State whose code is being redeemed right now. Tied to the state, so a cancelled attempt cannot block the next. */
-    @Volatile
-    private var exchangingStateId: String? = null
+    private var loginInProgress: Boolean = false
 
     @Volatile
-    private var pendingVerifier: String? = null
+    private var startToken: Any? = null
 
     @Volatile
-    private var pendingRelayBaseUrl: String? = null
-
-    @Volatile
-    private var pendingStartedAtMillis: Long = 0L
-
-    @Volatile
-    private var localCallbackServer: LocalAuthCallbackServer? = null
+    private var attempt: DeviceAttempt? = null
 
     fun currentState(): AuthFlowState = state
 
     fun resetUiState(message: String = "Готов к входу через Ely.by") {
-        if (pendingStateId != null) {
+        if (loginInProgress) {
             return
         }
         state = AuthFlowState(
@@ -72,78 +89,57 @@ object AuthWorkflowManager {
     }
 
     fun startBrowserLogin(): Boolean {
-        if (pendingStateId != null) {
-            state = AuthFlowState(
-                status = AuthFlowStatus.POLLING,
-                message = "Вход уже выполняется, заверши его в браузере.",
-            )
+        if (loginInProgress) {
             return false
         }
 
-        val relayBaseUrl = ModConfigStore.load().resolvedAuthServerBaseUrl().trimEnd('/')
-        val oauthState = LoopbackLogin.newSecret()
-        pendingStateId = oauthState
-        pendingRelayBaseUrl = relayBaseUrl
-        pendingStartedAtMillis = System.currentTimeMillis()
+        val token = Any()
+        startToken = token
+        loginInProgress = true
         state = AuthFlowState(
             status = AuthFlowStatus.OPENING_BROWSER,
-            message = "Проверяю сервер входа...",
+            message = "Получаю код входа от Ely.by...",
         )
 
-        // Off the render thread: the host may be slow or down.
+        // Off the render thread: Ely may be slow or unreachable.
         CompletableFuture
-            .supplyAsync { AuthHostClient.fetchLoginSupport(relayBaseUrl) }
-            .whenComplete { support, error ->
+            .supplyAsync { ElyDirectLogin.requestDeviceCode() }
+            .whenComplete { code, error ->
                 MinecraftClient.getInstance().execute {
-                    if (pendingStateId != oauthState) {
+                    if (startToken !== token) {
                         return@execute
                     }
-                    when {
-                        error != null || support == null -> {
-                            val cause = error?.cause ?: error
-                            logger.warn("Auth host {} is unreachable", relayBaseUrl, cause)
-                            fail("сервер входа недоступен (${cause?.message ?: cause?.javaClass?.simpleName ?: "unknown error"}).")
-                        }
-                        !support.oauthEnabled -> fail("на этом сервере входа не настроен Ely.by OAuth.")
-                        !support.loopbackLogin -> fail("сервер входа устарел и не поддерживает безопасный вход. Его плагин нужно обновить.")
-                        else -> openBrowser(oauthState, relayBaseUrl)
+                    startToken = null
+                    if (error != null || code == null) {
+                        val cause = error?.cause ?: error
+                        logger.warn("Could not get a login code from Ely.by", cause)
+                        fail("Ely.by недоступен (${cause?.message ?: cause?.javaClass?.simpleName ?: "unknown error"}).")
+                        return@execute
                     }
+                    beginWaiting(code)
                 }
             }
         return true
     }
 
-    private fun openBrowser(oauthState: String, relayBaseUrl: String) {
-        val verifier = LoopbackLogin.newSecret()
-        val callbackServer = try {
-            LocalAuthCallbackServer.start(oauthState)
-        } catch (exception: IOException) {
-            logger.warn("Could not open the local port for the login callback", exception)
-            fail("не удалось открыть локальный порт для входа (${exception.message}).")
-            return
-        }
-        localCallbackServer?.stop()
-        localCallbackServer = callbackServer
-        pendingVerifier = verifier
-        val startUri = AuthHostClient.buildStartUri(
-            relayBaseUrl = relayBaseUrl,
-            state = oauthState,
-            codeChallenge = LoopbackLogin.challengeFor(verifier),
-            clientRedirectUri = callbackServer.callbackUri,
+    private fun beginWaiting(code: ElyDeviceCode) {
+        val now = System.currentTimeMillis()
+        attempt = DeviceAttempt(
+            code = code,
+            intervalMs = code.intervalSeconds * 1000,
+            expiresAtMillis = now + code.expiresInSeconds * 1000,
+            nextPollAtMillis = now + code.intervalSeconds * 1000,
         )
-
-        // The state stays out of the log: latest.log gets shared in help threads.
-        logger.info("Starting Ely browser login via auth host {}", relayBaseUrl)
-        state = AuthFlowState(
-            status = AuthFlowStatus.OPENING_BROWSER,
-            message = "Открываю браузер и запускаю Ely OAuth...",
-        )
-
-        Util.getOperatingSystem().open(startUri)
+        // The code stays out of the log: latest.log gets shared in help threads.
+        logger.info("Waiting for the player to confirm the Ely.by login code")
         state = AuthFlowState(
             status = AuthFlowStatus.POLLING,
             message = "Подтверди вход в браузере, игра подхватит его сама...",
+            userCode = code.userCode,
+            verificationUri = code.verificationUri,
         )
+        runCatching { Util.getOperatingSystem().open(code.verificationUriComplete) }
+            .onFailure { logger.warn("Could not open the browser for the Ely.by login", it) }
     }
 
     fun clearSession() {
@@ -164,15 +160,49 @@ object AuthWorkflowManager {
         )
     }
 
-    fun syncLatestSessionFromAuthHost(): Boolean {
+    /** Renews the stored login: directly at Ely.by, or through the auth host for older sessions. */
+    fun refreshSession(): Boolean {
         val currentSession = ClientSessionStore.load()
-        if (currentSession.authSessionToken.isNullOrBlank() || currentSession.relayBaseUrl.isNullOrBlank()) {
+        return if (currentSession.isDirectLogin) {
+            refreshDirectSession(currentSession)
+        } else {
+            refreshRelaySession(currentSession)
+        }
+    }
+
+    private fun refreshDirectSession(currentSession: ClientSessionState): Boolean {
+        val refreshToken = currentSession.elyRefreshToken
+        if (refreshToken.isNullOrBlank()) {
+            logger.warn("Cannot refresh the Ely login: no refresh token stored.")
+            return false
+        }
+        return try {
+            val tokens = ElyDirectLogin.refresh(refreshToken)
+            ClientSessionStore.save(
+                currentSession.copy(
+                    elyAccessToken = tokens.accessToken,
+                    elyRefreshToken = tokens.refreshToken ?: refreshToken,
+                    authSessionExpiresAt = expiryOf(tokens),
+                ),
+            )
+            MinecraftClientSessionBridge.refreshActiveIdentity()
+            logger.info("Refreshed the Ely login directly at Ely.by.")
+            true
+        } catch (exception: Exception) {
+            logger.warn("Refreshing the Ely login failed: {}", exception.message)
+            false
+        }
+    }
+
+    private fun refreshRelaySession(currentSession: ClientSessionState): Boolean {
+        val authSessionToken = currentSession.authSessionToken
+        if (authSessionToken.isNullOrBlank() || currentSession.relayBaseUrl.isBlank()) {
             logger.warn("Cannot auto-refresh: missing session token or relay base url.")
             return false
         }
 
         return try {
-            val result = AuthHostClient.refreshSession(currentSession.relayBaseUrl, currentSession.authSessionToken)
+            val result = AuthHostClient.refreshSession(currentSession.relayBaseUrl, authSessionToken)
             if (result.status == "completed") {
                 val expiresAt = result.expiresAtEpochSeconds ?: return false
                 val elyAccessToken = result.elyAccessToken ?: return false
@@ -185,9 +215,8 @@ object AuthWorkflowManager {
                         elyUuid = result.uuid ?: currentSession.elyUuid,
                         elyTexturesValue = result.texturesValue ?: currentSession.elyTexturesValue,
                         elyTexturesSignature = result.texturesSignature ?: currentSession.elyTexturesSignature,
-                    )
+                    ),
                 )
-                // Refresh the in-game identity with updated data
                 MinecraftClientSessionBridge.refreshActiveIdentity()
                 logger.info("Successfully refreshed Ely session token via auth host.")
                 true
@@ -195,7 +224,7 @@ object AuthWorkflowManager {
                 logger.warn("Refresh failed with status {}", result.status)
                 state = AuthFlowState(
                     status = AuthFlowStatus.ERROR,
-                    message = "Auto-refresh failed (${result.status}: ${result.error}). Please log in via browser.",
+                    message = "Не удалось продлить вход (${result.status}: ${result.error}). Войди через Ely.by заново.",
                 )
                 false
             }
@@ -206,87 +235,78 @@ object AuthWorkflowManager {
     }
 
     fun tick(client: MinecraftClient) {
-        val oauthState = pendingStateId ?: return
-        val callbackPayload = localCallbackServer?.consumeResult()
-        if (callbackPayload != null) {
-            handleCallback(client, oauthState, callbackPayload)
+        val current = attempt ?: return
+        if (current.pollInFlight) {
             return
         }
-        if (exchangingStateId != oauthState && System.currentTimeMillis() - pendingStartedAtMillis > LOGIN_TIMEOUT_MS) {
-            fail("время на вход вышло, попробуй ещё раз.")
+        val now = System.currentTimeMillis()
+        if (now >= current.expiresAtMillis) {
+            fail("код истёк, попробуй ещё раз.")
+            return
         }
-    }
+        if (now < current.nextPollAtMillis) {
+            return
+        }
 
-    private fun handleCallback(client: MinecraftClient, oauthState: String, payload: LocalAuthCallbackPayload) {
-        val code = payload.code
-        if (payload.error != null || code == null) {
-            fail(payload.error ?: "сервер входа не вернул код.")
-            return
-        }
-        val verifier = pendingVerifier ?: return
-        val relayBaseUrl = pendingRelayBaseUrl ?: return
-        if (exchangingStateId == oauthState) {
-            return
-        }
-        exchangingStateId = oauthState
-        // The local server keeps running until the login ends, so the browser gets its page in full.
-        // It ignores everything after the first callback anyway.
-        state = AuthFlowState(
-            status = AuthFlowStatus.POLLING,
-            message = "Завершаю вход...",
-        )
-
+        current.pollInFlight = true
         CompletableFuture
-            .supplyAsync { AuthHostClient.exchangeCode(relayBaseUrl, oauthState, code, verifier) }
-            .whenComplete { result, error ->
+            .supplyAsync { poll(current.code.deviceCode) }
+            .whenComplete { outcome, error ->
                 // Back on the client thread: the identity swap below must not race the game.
                 client.execute {
-                    if (exchangingStateId == oauthState) {
-                        exchangingStateId = null
+                    current.pollInFlight = false
+                    if (attempt !== current) {
+                        // The player cancelled or restarted the login meanwhile.
+                        return@execute
                     }
-                    finishLogin(oauthState, relayBaseUrl, result, error)
+                    handleOutcome(current, outcome ?: PollOutcome.Error(error?.cause?.message ?: error?.message ?: "unknown error"))
                 }
             }
     }
 
-    private fun finishLogin(oauthState: String, relayBaseUrl: String, result: AuthPollResult?, error: Throwable?) {
-        if (pendingStateId != oauthState) {
-            // The player cancelled or restarted the login while the code was being redeemed.
-            return
+    /** Runs off the client thread. A confirmed code also fetches the profile, so the save is instant. */
+    private fun poll(deviceCode: String): PollOutcome {
+        return try {
+            when (val result = ElyDirectLogin.pollDeviceToken(deviceCode)) {
+                DeviceTokenPoll.Pending -> PollOutcome.Wait
+                DeviceTokenPoll.SlowDown -> PollOutcome.SlowDown
+                is DeviceTokenPoll.Failed -> PollOutcome.Error(result.error)
+                is DeviceTokenPoll.Granted -> PollOutcome.Done(result.tokens, ElyDirectLogin.fetchProfile(result.tokens.accessToken))
+            }
+        } catch (exception: Exception) {
+            // A network hiccup while the player is still in the browser is not fatal: try again later.
+            logger.warn("Asking Ely.by about the login code failed: {}", exception.message)
+            PollOutcome.Wait
         }
-        if (error != null || result == null) {
-            val cause = error?.cause ?: error
-            logger.warn("Redeeming the login code failed", cause)
-            fail("сервер входа недоступен (${cause?.message ?: cause?.javaClass?.simpleName ?: "unknown error"}).")
-            return
-        }
-        if (result.status != "completed") {
-            logger.warn("Auth host refused the login code: {}", result.error)
-            fail(result.error ?: "сервер входа отказал во входе.")
-            return
-        }
+    }
 
-        val authSessionToken = result.authSessionToken
-        val elyAccessToken = result.elyAccessToken
-        val username = result.username
-        val uuid = result.uuid
-        val expiresAt = result.expiresAtEpochSeconds
-        if (authSessionToken.isNullOrBlank() || elyAccessToken.isNullOrBlank() || username.isNullOrBlank() || uuid.isNullOrBlank() || expiresAt == null) {
-            logger.warn("Auth host returned an incomplete login response")
-            fail("Auth host вернул неполный auth session response.")
-            return
+    private fun handleOutcome(current: DeviceAttempt, outcome: PollOutcome) {
+        val now = System.currentTimeMillis()
+        when (outcome) {
+            PollOutcome.Wait -> current.nextPollAtMillis = now + current.intervalMs
+            PollOutcome.SlowDown -> {
+                current.intervalMs += SLOW_DOWN_STEP_MS
+                current.nextPollAtMillis = now + current.intervalMs
+            }
+            is PollOutcome.Error -> {
+                logger.warn("Ely.by refused the login: {}", outcome.message)
+                fail(outcome.message)
+            }
+            is PollOutcome.Done -> finishLogin(outcome.tokens, outcome.profile)
         }
+    }
 
+    private fun finishLogin(tokens: ElyTokens, profile: ElyProfile) {
         ClientSessionStore.save(
             ClientSessionState(
-                relayBaseUrl = relayBaseUrl,
-                authSessionToken = authSessionToken,
-                elyAccessToken = elyAccessToken,
-                authSessionExpiresAt = Instant.ofEpochSecond(expiresAt),
-                elyUsername = username,
-                elyUuid = uuid,
-                elyTexturesValue = result.texturesValue,
-                elyTexturesSignature = result.texturesSignature,
+                relayBaseUrl = "",
+                elyAccessToken = tokens.accessToken,
+                elyRefreshToken = tokens.refreshToken,
+                authSessionExpiresAt = expiryOf(tokens),
+                elyUsername = profile.username,
+                elyUuid = profile.uuid,
+                elyTexturesValue = profile.texturesValue,
+                elyTexturesSignature = profile.texturesSignature,
             ),
         )
         MinecraftClientSessionBridge.refreshActiveIdentity()
@@ -294,9 +314,14 @@ object AuthWorkflowManager {
         resetPendingLogin()
         state = AuthFlowState(
             status = AuthFlowStatus.SUCCESS,
-            message = "Вход завершен: $username ($uuid)",
+            message = "Вход завершен: ${profile.username}",
         )
-        logger.info("Stored Ely auth session for {} ({})", username, uuid)
+        logger.info("Stored Ely login for {} ({})", profile.username, profile.uuid)
+    }
+
+    private fun expiryOf(tokens: ElyTokens): Instant {
+        val lifetime = if (tokens.expiresInSeconds > 0) Duration.ofSeconds(tokens.expiresInSeconds) else FALLBACK_TOKEN_LIFETIME
+        return Instant.now().plus(lifetime)
     }
 
     private fun fail(message: String) {
@@ -308,12 +333,8 @@ object AuthWorkflowManager {
     }
 
     private fun resetPendingLogin() {
-        pendingStateId = null
-        exchangingStateId = null
-        pendingVerifier = null
-        pendingRelayBaseUrl = null
-        pendingStartedAtMillis = 0L
-        localCallbackServer?.stop()
-        localCallbackServer = null
+        loginInProgress = false
+        startToken = null
+        attempt = null
     }
 }

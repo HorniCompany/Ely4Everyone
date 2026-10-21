@@ -29,6 +29,7 @@ object ClientSessionStore {
             elyUuid = properties.getProperty("ely_uuid")?.ifBlank { null },
             elyTexturesValue = properties.getProperty("ely_textures_value")?.ifBlank { null },
             elyTexturesSignature = properties.getProperty("ely_textures_signature")?.ifBlank { null },
+            elyRefreshToken = properties.getProperty("ely_refresh_token")?.ifBlank { null },
         )
     }
 
@@ -45,6 +46,7 @@ object ClientSessionStore {
                 setProperty("ely_uuid", state.elyUuid.orEmpty())
                 setProperty("ely_textures_value", state.elyTexturesValue.orEmpty())
                 setProperty("ely_textures_signature", state.elyTexturesSignature.orEmpty())
+                setProperty("ely_refresh_token", state.elyRefreshToken.orEmpty())
             }.store(stream, "Ely4Everyone client session")
         }
     }
@@ -70,6 +72,7 @@ object ClientSessionStore {
                 setProperty("ely_uuid", "")
                 setProperty("ely_textures_value", "")
                 setProperty("ely_textures_signature", "")
+                setProperty("ely_refresh_token", "")
             }.store(stream, "Ely4Everyone client session")
         }
     }

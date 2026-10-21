@@ -84,7 +84,7 @@ object TokenHealthMonitor {
         val remaining = remainingTimeText()
         val suffix = if (remaining != null) " ($remaining)" else ""
         return when (health) {
-            TokenHealth.HEALTHY -> "✅ Сессия активна$suffix"
+            TokenHealth.HEALTHY -> "✅ Сессия активна"
             TokenHealth.EXPIRING_SOON -> "⚠ Сессия скоро истечёт$suffix"
             TokenHealth.EXPIRED -> "❌ Сессия истекла — войдите заново$suffix"
             TokenHealth.NOT_AUTHENTICATED -> "Войти через Ely.by"
@@ -105,7 +105,7 @@ object TokenHealthMonitor {
         if (bootHealth == TokenHealth.EXPIRING_SOON || bootHealth == TokenHealth.EXPIRED) {
             logger.info("Token is {} at boot — attempting background refresh...", bootHealth)
             try {
-                val success = AuthWorkflowManager.syncLatestSessionFromAuthHost()
+                val success = AuthWorkflowManager.refreshSession()
                 if (success) {
                     consecutiveFailures = 0
                     lastAutoRefreshSuccess = true
@@ -187,10 +187,10 @@ object TokenHealthMonitor {
         }
 
         lastAutoRefreshAttempt = now
-        logger.info("Attempting auto-refresh of Ely session via auth-host (attempt #{})...", consecutiveFailures + 1)
+        logger.info("Attempting auto-refresh of the Ely session (attempt #{})...", consecutiveFailures + 1)
 
         try {
-            lastAutoRefreshSuccess = AuthWorkflowManager.syncLatestSessionFromAuthHost()
+            lastAutoRefreshSuccess = AuthWorkflowManager.refreshSession()
             if (lastAutoRefreshSuccess) {
                 consecutiveFailures = 0
                 logger.info("Auto-refresh succeeded!")

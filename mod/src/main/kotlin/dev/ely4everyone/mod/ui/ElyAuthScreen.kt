@@ -3,13 +3,11 @@ package dev.ely4everyone.mod.ui
 import dev.ely4everyone.mod.auth.AuthFlowState
 import dev.ely4everyone.mod.auth.AuthFlowStatus
 import dev.ely4everyone.mod.auth.AuthWorkflowManager
-import dev.ely4everyone.mod.config.AuthHostTrustState
 import dev.ely4everyone.mod.config.ClientAuthConfig
 import dev.ely4everyone.mod.config.ModConfig
 import dev.ely4everyone.mod.config.ModConfigStore
 import dev.ely4everyone.mod.session.TokenHealthMonitor
 import dev.ely4everyone.mod.session.TokenHealthMonitor.TokenHealth
-import dev.ely4everyone.mod.host.AuthHostActionPolicy
 import dev.ely4everyone.mod.host.AuthHostCatalog
 import dev.ely4everyone.mod.host.AuthHostEntry
 import dev.ely4everyone.mod.host.AuthHostSource
@@ -143,7 +141,7 @@ class ElyAuthScreen(
         // ── SUCCESS mode: refresh session button ──
         refreshSessionButton = addDrawableChild(
             ButtonWidget.builder(Text.literal("Обновить сессию")) {
-                val success = AuthWorkflowManager.syncLatestSessionFromAuthHost()
+                val success = AuthWorkflowManager.refreshSession()
                 if (success) {
                     TokenHealthMonitor.forceReevaluate()
                     mode = Mode.SUCCESS
@@ -221,7 +219,7 @@ class ElyAuthScreen(
 
         // Auto-transition based on auth state
         when {
-            authState.status == AuthFlowStatus.SUCCESS || session.hasUsableAuthSession() -> {
+            authState.status == AuthFlowStatus.SUCCESS || session.isSignedIn() -> {
                 ensurePreviewRequested(session)
                 if (mode != Mode.SUCCESS) {
                     mode = Mode.SUCCESS
@@ -308,49 +306,40 @@ override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float
 private fun renderLogin(context: DrawContext, panelTop: Int) {
     context.drawCenteredTextWithShadow(textRenderer, Text.literal("Играй на серверах с Ely.by"), centerX, panelTop + 14, COLOR_SUBTITLE)
 
-    val selected = selectedEntry()
-    val hostName = selected?.displayName ?: "не выбран"
-    val hostUrl = selected?.baseUrl ?: "-"
-    val trustText = when (selected?.trustState) {
-        AuthHostTrustState.TRUSTED -> "✅ доверенный"
-        AuthHostTrustState.PENDING -> "⚠ требует подтверждения"
-        AuthHostTrustState.BLOCKED -> "❌ заблокирован"
-        null -> "-"
-    }
-
+    // The login goes straight to Ely.by, there is no auth host to pick any more.
     val infoY = panelTop + 36
     drawTechPanel(context, centerX - 110, infoY - 6, centerX + 110, infoY + 40, 0x70000000.toInt(), 0x501E654E.toInt())
 
-    context.drawCenteredTextWithShadow(textRenderer, Text.literal("Сервер: $hostName"), centerX, infoY, COLOR_TEXT)
-    context.drawCenteredTextWithShadow(textRenderer, Text.literal(hostUrl), centerX, infoY + 12, COLOR_DIM)
-    context.drawCenteredTextWithShadow(textRenderer, Text.literal(trustText), centerX, infoY + 24, trustColor(selected))
+    context.drawCenteredTextWithShadow(textRenderer, Text.literal("Вход напрямую через Ely.by"), centerX, infoY, COLOR_TEXT)
+    context.drawCenteredTextWithShadow(textRenderer, Text.literal("откроется account.ely.by"), centerX, infoY + 12, COLOR_DIM)
+    context.drawCenteredTextWithShadow(textRenderer, Text.literal("без посредников"), centerX, infoY + 24, COLOR_DIM)
 
-    val actions = AuthHostActionPolicy.forEntry(selected)
-    if (actions.canTrust && !actions.canStartAuth) {
-        loginButton.message = Text.literal("Доверять и войти")
-        loginButton.active = true
-    } else if (actions.canStartAuth) {
-        loginButton.message = Text.literal("Войти через Ely.by")
-        loginButton.active = true
-    } else {
-        loginButton.message = Text.literal("Выберите рабочий хост")
-        loginButton.active = false
-    }
+    loginButton.message = Text.literal("Войти через Ely.by")
+    loginButton.active = true
 }
 
 private fun renderPolling(context: DrawContext, panelTop: Int) {
-    context.drawCenteredTextWithShadow(textRenderer, Text.literal("Ожидаю авторизацию..."), centerX, panelTop + 14, COLOR_ACCENT)
-
-    val dots = ".".repeat(((System.currentTimeMillis() / 500) % 4).toInt())
-    context.drawCenteredTextWithShadow(textRenderer, Text.literal("Завершите вход в браузере$dots"), centerX, panelTop + 36, COLOR_DIM)
-
     val authState = AuthWorkflowManager.currentState()
-    context.drawCenteredTextWithShadow(textRenderer, Text.literal(authState.message), centerX, panelTop + 56, COLOR_SUBTITLE)
+    val userCode = authState.userCode
+    if (userCode == null) {
+        context.drawCenteredTextWithShadow(textRenderer, Text.literal(authState.message), centerX, panelTop + 36, COLOR_SUBTITLE)
+    } else {
+        context.drawCenteredTextWithShadow(textRenderer, Text.literal("Подтверди вход в браузере"), centerX, panelTop + 14, COLOR_ACCENT)
+        context.drawCenteredTextWithShadow(textRenderer, Text.literal("выбери аккаунт и нажми «Разрешить»"), centerX, panelTop + 28, COLOR_DIM)
+
+        // The code itself, for confirming from a phone if the browser did not open here.
+        val codeY = panelTop + 48
+        drawTechPanel(context, centerX - 70, codeY - 6, centerX + 70, codeY + 14, 0x70000000.toInt(), 0xFF38B48B.toInt())
+        context.drawCenteredTextWithShadow(textRenderer, Text.literal(userCode.chunked(1).joinToString(" ")), centerX, codeY, COLOR_TEXT)
+
+        val pageUrl = (authState.verificationUri ?: "https://account.ely.by/code").removePrefix("https://")
+        context.drawCenteredTextWithShadow(textRenderer, Text.literal("не открылся? введи код на $pageUrl"), centerX, panelTop + 72, COLOR_DIM)
+    }
 
     // Polling spinner animation
     val spinTime = (System.currentTimeMillis() % 2000L).toFloat() / 2000f
     val spinnerCenterX = centerX
-    val spinnerCenterY = panelTop + 90
+    val spinnerCenterY = panelTop + 100
     val radius = 16.0
     val angle = spinTime * Math.PI * 2.0
     context.fill(spinnerCenterX + (kotlin.math.cos(angle) * radius).toInt() - 2, spinnerCenterY + (kotlin.math.sin(angle) * radius).toInt() - 2, spinnerCenterX + (kotlin.math.cos(angle) * radius).toInt() + 2, spinnerCenterY + (kotlin.math.sin(angle) * radius).toInt() + 2, COLOR_ACCENT)
@@ -383,18 +372,19 @@ private fun renderSuccess(context: DrawContext, panelTop: Int) {
     val infoY = skinTop + 20
     val username = session.elyUsername ?: "неизвестно"
     val uuid = session.elyUuid ?: "-"
-    val host = selectedEntry()?.displayName ?: "horni.cc"
+    val host = if (session.isDirectLogin) "Ely.by" else selectedEntry()?.displayName ?: "horni.cc"
 
     drawTechPanel(context, infoLeft - 10, infoY - 10, panelRight, skinTop + 154, 0x70000000.toInt(), 0x501E654E.toInt())
 
     context.drawTextWithShadow(textRenderer, Text.literal("Ник: $username"), infoLeft, infoY, COLOR_TEXT)
     context.drawTextWithShadow(textRenderer, Text.literal("UUID: ${uuid.take(13)}..."), infoLeft, infoY + 14, COLOR_DIM)
-    context.drawTextWithShadow(textRenderer, Text.literal("Хост: $host"), infoLeft, infoY + 28, COLOR_DIM)
+    context.drawTextWithShadow(textRenderer, Text.literal("Вход: $host"), infoLeft, infoY + 28, COLOR_DIM)
 
     val health = TokenHealthMonitor.currentHealth()
     val remaining = TokenHealthMonitor.remainingTimeText()
     val (statusText, statusColor) = when (health) {
-        TokenHealth.HEALTHY -> (if (remaining != null) "Сессия: ✅ $remaining" else "Сессия: активна ✅") to COLOR_SUCCESS
+        // Ely tokens live for years, a countdown of thousands of days says nothing. Count down only near the end.
+        TokenHealth.HEALTHY -> "Сессия: активна ✅" to COLOR_SUCCESS
         TokenHealth.EXPIRING_SOON -> (if (remaining != null) "Сессия: ⚠ $remaining" else "Сессия: скоро истечёт ⚠") to COLOR_WARNING
         TokenHealth.EXPIRED -> "Сессия: истекла ❌" to COLOR_ERROR
         TokenHealth.NOT_AUTHENTICATED -> "Сессия: не активна" to COLOR_DIM
@@ -423,17 +413,16 @@ private fun renderError(context: DrawContext, panelTop: Int) {
         val isPolling = mode == Mode.POLLING
         val isSuccess = mode == Mode.SUCCESS
         val isError = mode == Mode.ERROR
-        val isCustomHost = selectedEntry()?.id == ClientAuthConfig.CUSTOM_HOST_ID
 
-        // LOGIN
+        // LOGIN. Logins go straight to Ely.by, so the auth host picker stays hidden.
         loginButton.visible = isLogin
-        prevHostButton.visible = isLogin && catalog.entries.size > 1
-        prevHostButton.active = isLogin && catalog.entries.size > 1
-        nextHostButton.visible = isLogin && catalog.entries.size > 1
-        nextHostButton.active = isLogin && catalog.entries.size > 1
-        customHostField.visible = isLogin && isCustomHost
-        customHostField.active = isLogin && isCustomHost
-        customHostField.setEditable(isLogin && isCustomHost)
+        prevHostButton.visible = false
+        prevHostButton.active = false
+        nextHostButton.visible = false
+        nextHostButton.active = false
+        customHostField.visible = false
+        customHostField.active = false
+        customHostField.setEditable(false)
 
         // POLLING
         cancelButton.visible = isPolling
@@ -502,7 +491,7 @@ private fun renderError(context: DrawContext, panelTop: Int) {
 
     private fun resolveMode(session: ClientSessionState, authState: AuthFlowState): Mode {
         return when {
-            authState.status == AuthFlowStatus.SUCCESS || session.hasUsableAuthSession() -> Mode.SUCCESS
+            authState.status == AuthFlowStatus.SUCCESS || session.isSignedIn() -> Mode.SUCCESS
             authState.status == AuthFlowStatus.ERROR -> {
                 errorMessage = authState.message
                 Mode.ERROR
@@ -697,15 +686,6 @@ private fun drawHologramPlatform(context: DrawContext, centerX: Int, centerY: In
         }
         if (current.isNotBlank()) lines += current
         return lines.ifEmpty { listOf(text) }
-    }
-
-    private fun trustColor(entry: AuthHostEntry?): Int {
-        return when (entry?.trustState) {
-            AuthHostTrustState.TRUSTED -> COLOR_SUCCESS
-            AuthHostTrustState.PENDING -> COLOR_WARNING
-            AuthHostTrustState.BLOCKED -> COLOR_ERROR
-            null -> COLOR_DIM
-        }
     }
 
     private fun extractSkinModel(texturesValue: String?): PlayerSkinType {

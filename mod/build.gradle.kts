@@ -134,6 +134,8 @@ val buildAndSyncToLocalMods by tasks.registering {
 
 tasks.test {
     useJUnitPlatform()
+    // Manual live login check, see ElyDirectLoginLiveTest. Unset = the test skips itself.
+    System.getProperty("ely4everyone.liveLogin")?.let { systemProperty("ely4everyone.liveLogin", it) }
 }
 
 kotlin {

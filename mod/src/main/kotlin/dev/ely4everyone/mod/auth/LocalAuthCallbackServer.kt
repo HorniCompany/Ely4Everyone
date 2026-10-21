@@ -12,9 +12,13 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /**
- * Receives the end of a browser login on 127.0.0.1. The auth host redirects the player's own
+ * Receives the end of a browser login on 127.0.0.1. The login page redirects the player's own
  * browser here, which is what ties the login to this machine. Only the first callback carrying
  * the expected state is kept.
+ *
+ * Not wired in right now: logins use the device code ([ElyDirectLogin]). Ely.by's own login page
+ * drops `code_challenge`, so a direct loopback login cannot finish yet. Once Ely fixes that, this
+ * server plus PKCE gives a login without any code to confirm.
  */
 class LocalAuthCallbackServer private constructor(
     private val expectedState: String,

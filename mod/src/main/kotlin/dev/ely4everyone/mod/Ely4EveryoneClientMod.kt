@@ -29,7 +29,9 @@ class Ely4EveryoneClientMod : ClientModInitializer {
 
         // Attempt to silently refresh an expiring/expired session at boot time
         // so the player doesn't have to re-login through browser every day
-        if (sessionState.authSessionToken != null && sessionState.relayBaseUrl.isNotBlank()) {
+        val canRefresh = !sessionState.elyRefreshToken.isNullOrBlank() ||
+            (!sessionState.authSessionToken.isNullOrBlank() && sessionState.relayBaseUrl.isNotBlank())
+        if (canRefresh) {
             java.util.concurrent.CompletableFuture.runAsync {
                 TokenHealthMonitor.bootTimeRefresh()
             }
@@ -40,7 +42,7 @@ class Ely4EveryoneClientMod : ClientModInitializer {
             config.relayBaseUrl,
             config.serverDiscoveryMode,
             config.preferredLoginMode,
-            sessionState.hasUsableAuthSession(),
+            sessionState.isSignedIn(),
             MinecraftClientSessionBridge.currentSessionSummary(),
         )
     }
