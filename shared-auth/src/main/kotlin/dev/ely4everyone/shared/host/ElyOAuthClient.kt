@@ -149,7 +149,8 @@ class ElyOAuthClient(
     override fun fetchTexturesProfile(uuid: String): ElyTexturesProfile {
         val response = httpClient.send(
             UpstreamHttp.request(
-                URI.create("https://authserver.ely.by/session/profile/" + uuid.replace("-", "")),
+                // Without unsigned=false Ely, like Mojang, leaves the signature out.
+                URI.create("https://authserver.ely.by/session/profile/" + uuid.replace("-", "") + "?unsigned=false"),
             )
                 .timeout(Duration.ofSeconds(15))
                 .GET()
