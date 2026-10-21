@@ -125,6 +125,9 @@ def version_type(version: str) -> str:
 
 
 def main() -> None:
+    # Windows consoles default to a legacy code page and mangle the Russian titles.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dry-run", action="store_true", help="show the plan, publish nothing")
     parser.add_argument("--env-file", type=Path, default=Path.home() / ".env")
