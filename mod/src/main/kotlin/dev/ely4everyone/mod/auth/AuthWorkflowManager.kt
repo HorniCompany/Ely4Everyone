@@ -162,12 +162,30 @@ object AuthWorkflowManager {
 
     /** Renews the stored login: directly at Ely.by, or through the auth host for older sessions. */
     fun refreshSession(): Boolean {
-        val currentSession = ClientSessionStore.load()
-        return if (currentSession.isDirectLogin) {
-            refreshDirectSession(currentSession)
-        } else {
-            refreshRelaySession(currentSession)
+        val seenSession = ClientSessionStore.load()
+        // All games of this user share one login. Only one may renew it at a time, or a refresh token
+        // that Ely rotates in one game would be spent again by the other and log the player out.
+        return ClientSessionStore.tryWithLock {
+            val currentSession = ClientSessionStore.load()
+            when {
+                renewedElsewhere(seenSession, currentSession) -> {
+                    logger.info("Another game already renewed the Ely login, using it.")
+                    MinecraftClientSessionBridge.refreshActiveIdentity()
+                    true
+                }
+                currentSession.isDirectLogin -> refreshDirectSession(currentSession)
+                else -> refreshRelaySession(currentSession)
+            }
+        } ?: run {
+            logger.info("Another game is renewing the Ely login right now, skipping this attempt.")
+            false
         }
+    }
+
+    private fun renewedElsewhere(seen: ClientSessionState, current: ClientSessionState): Boolean {
+        val seenExpiry = seen.authSessionExpiresAt ?: return false
+        val currentExpiry = current.authSessionExpiresAt ?: return false
+        return currentExpiry.isAfter(seenExpiry) && current.hasUsableElyAccessToken()
     }
 
     private fun refreshDirectSession(currentSession: ClientSessionState): Boolean {
@@ -189,7 +207,7 @@ object AuthWorkflowManager {
             logger.info("Refreshed the Ely login directly at Ely.by.")
             true
         } catch (exception: Exception) {
-            logger.warn("Refreshing the Ely login failed: {}", exception.message)
+            logger.warn("Refreshing the Ely login failed: {}", exception.toString())
             false
         }
     }

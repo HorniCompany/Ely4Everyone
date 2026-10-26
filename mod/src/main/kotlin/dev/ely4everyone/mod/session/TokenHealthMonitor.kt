@@ -155,11 +155,13 @@ object TokenHealthMonitor {
     }
 
     private fun evaluateHealth(): TokenHealth {
+        val session = ClientSessionStore.load()
         if (!ActiveElyIdentityManager.isActive()) {
-            return TokenHealth.NOT_AUTHENTICATED
+            // An expired access token alone does not mean logged out: the stored refresh token can renew it,
+            // and a successful refresh activates the identity again.
+            return if (canRenew(session)) TokenHealth.EXPIRED else TokenHealth.NOT_AUTHENTICATED
         }
 
-        val session = ClientSessionStore.load()
         val expiresAt = session.authSessionExpiresAt ?: return TokenHealth.HEALTHY // No expiry = eternal
 
         val now = Instant.now()
@@ -173,6 +175,12 @@ object TokenHealthMonitor {
         }
 
         return TokenHealth.HEALTHY
+    }
+
+    private fun canRenew(session: ClientSessionState): Boolean {
+        val hasRenewal = !session.elyRefreshToken.isNullOrBlank() ||
+            (!session.authSessionToken.isNullOrBlank() && session.relayBaseUrl.isNotBlank())
+        return hasRenewal && !session.elyUsername.isNullOrBlank() && !session.elyUuid.isNullOrBlank()
     }
 
     private fun tryAutoRefresh() {

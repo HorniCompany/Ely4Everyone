@@ -18,7 +18,7 @@ class Ely4EveryoneClientMod : ClientModInitializer {
 
     override fun onInitializeClient() {
         ModConfigStore.saveDefaultsIfMissing()
-        ClientSessionStore.saveDefaultsIfMissing()
+        ClientSessionStore.removeLegacyInstanceFile()
         val config = ModConfigStore.load()
         val sessionState = ClientSessionStore.load()
         MinecraftClientSessionBridge.refreshActiveIdentity()
