@@ -97,14 +97,27 @@ def game_versions(properties: dict[str, str]) -> list[str]:
     return [v.strip() for v in listed.split(",") if v.strip()] or [properties["minecraftVersion"]]
 
 
-def read_changelog(version: str) -> tuple[str, str]:
+def read_changelog(version: str) -> tuple[str, str, str, str]:
+    """(title, notes, English title, English notes). The notes are Russian first; an English part
+    may follow after a line `---` and its own `# Title`. GitHub gets the whole file, Modrinth (an
+    English page) only the English part, or everything when there is none."""
     path = ROOT / "changelog" / f"{version}.md"
     if not path.exists():
         sys.exit(f"write the release notes first: {path.relative_to(ROOT)} (first line '# Title')")
     lines = path.read_text(encoding="utf-8").splitlines()
     if not lines or not lines[0].startswith("# "):
         sys.exit(f"{path.relative_to(ROOT)} must start with '# Title'")
-    return lines[0][2:].strip(), "\n".join(lines[1:]).strip() + "\n"
+    title, notes = lines[0][2:].strip(), "\n".join(lines[1:]).strip() + "\n"
+    english_title, english_notes = title, notes
+    if "---" in lines:
+        last_rule = len(lines) - 1 - lines[::-1].index("---")
+        tail = lines[last_rule + 1:]
+        while tail and not tail[0].strip():
+            tail.pop(0)
+        if tail and tail[0].startswith("# "):
+            english_title = tail[0][2:].strip()
+            english_notes = "\n".join(tail[1:]).strip() + "\n"
+    return title, notes, english_title, english_notes
 
 
 def modrinth_token(env_file: Path) -> str:
@@ -180,7 +193,7 @@ def main() -> None:
 
     version = read_version()
     tag = f"v{version}"
-    title, notes = read_changelog(version)
+    title, notes, english_title, english_notes = read_changelog(version)
     nodes = {node: read_node_properties(node) for node in read_nodes()}
     mod_jars = {node: f"ely4everyone-mod-{version}+{props['minecraftVersion']}.jar" for node, props in nodes.items()}
     print(f"release {tag} ({title}), Minecraft: {', '.join(nodes)}")
@@ -229,8 +242,8 @@ def main() -> None:
             data = {
                 "project_id": project["id"],
                 "version_number": number,
-                "name": f"{version} for {props['minecraftVersion']}: {title}",
-                "changelog": notes,
+                "name": f"{version} for {props['minecraftVersion']}: {english_title}",
+                "changelog": english_notes,
                 "dependencies": [{"project_id": FABRIC_API_PROJECT_ID, "dependency_type": "required"}],
                 "game_versions": game_versions(props),
                 "version_type": version_type(version),
