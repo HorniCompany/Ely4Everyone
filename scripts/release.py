@@ -14,6 +14,8 @@ Steps, each skipped when already done:
 3. Modrinth: one version per Minecraft version, number <version>+<minecraft>, game versions from
    modrinthGameVersions in the node properties (default: the node's own version). Each jar is
    **downloaded from the GitHub release**, so both places ship byte-identical files.
+4. Modrinth page: the description is README.en.md with absolute links (see modrinth_body), updated
+   when it differs.
 
 Release notes live in changelog/<version>.md: the first line `# Title` is the release title,
 the rest is the body used on GitHub and Modrinth.
@@ -143,6 +145,22 @@ def multipart(data: dict, file_name: str, file_bytes: bytes) -> tuple[bytes, str
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
 
+RAW = f"https://raw.githubusercontent.com/{REPO}/main/"
+GITHUB = f"https://github.com/{REPO}/blob/main/"
+
+
+def modrinth_body() -> str:
+    """README.en.md as the Modrinth description: English only, absolute links, PNG banner, no GitHub alerts."""
+    text = (ROOT / "README.en.md").read_text(encoding="utf-8")
+    text = re.sub(r"\n[^\n]*README\.md[^\n]*\n", "\n", text)  # the "read in Russian" line
+    text = text.replace("<br>\n</p>", "\n</p>")
+    text = text.replace('src="img/vector/banner.svg"', f'src="{RAW}img/banner.png"')
+    text = re.sub(r'src="(img/[^"]+)"', lambda m: f'src="{RAW}{m.group(1)}"', text)
+    text = text.replace('href="LICENSE"', f'href="{GITHUB}LICENSE"').replace("](LICENSE)", f"]({GITHUB}LICENSE)")
+    text = text.replace("> [!WARNING]\n", "> ⚠️ **Warning**\n>\n")
+    return text.strip() + "\n"
+
+
 def version_type(version: str) -> str:
     if "alpha" in version:
         return "alpha"
@@ -233,6 +251,17 @@ def main() -> None:
             body, content_type = multipart(data, jar_name, (Path(download_dir) / jar_name).read_bytes())
             created = modrinth("POST", "/version", token, body, content_type)
             print(f"Modrinth: published https://modrinth.com/mod/{MODRINTH_PROJECT}/version/{created['id']}")
+
+    # 4. Modrinth page description from README.en.md.
+    body = modrinth_body()
+    if project.get("body", "").strip() == body.strip():
+        print("Modrinth: description is up to date")
+    elif args.dry_run:
+        print("Modrinth: would update the description from README.en.md")
+    else:
+        token = token or modrinth_token(args.env_file)
+        modrinth("PATCH", f"/project/{project['id']}", token, json.dumps({"body": body}).encode(), "application/json")
+        print("Modrinth: description updated from README.en.md")
 
 
 if __name__ == "__main__":

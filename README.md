@@ -1,56 +1,75 @@
-# Ely4Everyone 🚀
+<p align="center">
+  <img src="img/vector/banner.svg" alt="Ely4Everyone" width="100%">
+</p>
 
-[![CI](https://github.com/Cokeef/Ely4Everyone/actions/workflows/ci.yml/badge.svg)](https://github.com/Cokeef/Ely4Everyone/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+<p align="center">
+  <a href="https://modrinth.com/mod/ely4everyone"><img src="https://img.shields.io/modrinth/dt/ely4everyone?logo=modrinth&label=Modrinth&color=00AF5C" alt="Modrinth"></a>
+  <img src="https://img.shields.io/badge/Minecraft-1.21.11%20%7C%2026.1.2%20%7C%2026.2%20%7C%2026.3-3d87cb" alt="Minecraft 1.21.11, 26.1.2, 26.2, 26.3">
+  <img src="https://img.shields.io/badge/loader-Fabric-dbd0b4" alt="Fabric">
+  <a href="https://github.com/HorniCompany/Ely4Everyone/actions/workflows/ci.yml"><img src="https://github.com/HorniCompany/Ely4Everyone/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
+</p>
+
+<p align="center">
+  <b>Вход через Ely.by прямо в игре. Без authlib-injector и особых лаунчеров.</b><br>
+  🇬🇧 <a href="README.en.md">Read in English</a>
+</p>
 
 > [!WARNING]
-> Проект экспериментальный и написан ПОЛНОСТЬЮ с помощью AI.
-> 
-> Это значит, что в коде и архитектуре всё ещё возможны ошибки, и перед использованием на реальном публичном сервере проект нужно тестировать с осторожностью.
+> **Код этого мода написан искусственным интеллектом** (Claude) под руководством человека, который ставит задачи и тестирует.
+> Мод в стадии **альфы**: ошибки возможны. Перед использованием на публичном сервере проверь его у себя.
 
-![Ely4Everyone banner](img/vector/banner.svg)
+## ✨ Что умеет
 
-**Лучший способ играть с Ely.by на современных клиентах.**
+- 🔑 **Вход в Ely.by из меню игры.** Кнопка на главном экране открывает страницу Ely.by в браузере, подтверждаешь вход, и всё. Работает в любом лаунчере: Modrinth App, Prism, официальном.
+- 🧍 **Твой скин с Ely.by** в одиночной игре и на серверах, с превью в меню.
+- 👥 **Ely-скины других игроков** по нику на любом сервере. Если на Ely скина нет, остаётся обычный.
+- 🌐 **Заход на серверы с Ely.by-авторизацией** под твоим Ely-аккаунтом.
+- 🔒 **Вход не попадает в сборку.** Токены лежат в хранилище паролей системы (Windows) или в закрытом файле в папке пользователя, а не в `config/`. Экспорт модпака их не унесёт, а одна сессия работает во всех сборках.
+- 🔄 **Сессия продлевается сама**, заново входить каждый день не нужно.
 
-Больше никаких `authlib-injector`, мучений с аргументами JVM, сторонних лаунчеров и поломанных скинов. Просто закиньте этот Fabric-мод в папку `mods` и наслаждайтесь жизнью!
+## 📸 Как выглядит
 
-## 🌟 Возможности (Features)
+<p align="center">
+  <img src="img/screenshots/login-screen.png" alt="Экран Ely4Everyone" width="49%">
+  <img src="img/screenshots/skins-online.png" alt="Ely-скин игрока на сервере" width="49%">
+</p>
 
-✨ **Удобный вход прямо в игре** — красивый и современный UI дизайн с 3D-предпросмотром вашего скина прямо в меню майнкрафта.
-✨ **Восстановление скинов (Universal Skin System)** — даже если вы играете с лицензионного аккаунта, мод автоматически вернёт отображение скинов других игроков с базы Ely.by. Работает на любых серверах!
-✨ **Моментальная интеграция** — больше не нужны костыли. Никаких javaagent'ов, никаких настроек. Поставил -> вошел -> играешь.
-✨ **Бесшовная поддержка серверов** — играйте на серверах с поддержкой Ely.by без лишних танцев с бубном.
+## 📦 Установка
 
----
+1. Поставь [Fabric Loader](https://fabricmc.net/use/) и [Fabric API](https://modrinth.com/mod/fabric-api).
+2. Скачай Ely4Everyone под свою версию игры с [Modrinth](https://modrinth.com/mod/ely4everyone) или из [релизов](https://github.com/HorniCompany/Ely4Everyone/releases):
 
-## 🛠️ Как это работает?
+   | Minecraft | Файл | Java |
+   |---|---|---|
+   | 26.3 | `ely4everyone-mod-…+26.3.jar` | 25 |
+   | 26.2 | `ely4everyone-mod-…+26.2.jar` | 25 |
+   | 26.1.2 | `ely4everyone-mod-…+26.1.2.jar` | 25 |
+   | 1.21.11 | `ely4everyone-mod-…+1.21.11.jar` | 21 |
 
-В отличие от устаревших методов, мы не пытаемся "хакнуть" JVM на лету. **Ely4Everyone** мягко интегрируется прямо во внутренние системы Minecraft (через Mixin в Yggdrasil-аутентификацию). 
-Это значит, что игра на 100% думает, что она работает штатно, просто вместо Microsoft она общается с серверами авторизации Ely.
+3. Положи jar в папку `mods` и запусти игру.
+4. На главном экране нажми кнопку **E** слева от «Настроек», потом «Войти через Ely.by» и подтверди вход на открывшейся странице Ely.by.
 
----
+Кнопка «Выйти» на том же экране возвращает игру к обычному аккаунту.
+
+## 🛠️ Как это устроено
+
+- Вход идёт **напрямую в Ely.by** по OAuth (device code), без промежуточных серверов.
+- Мод встраивается в игру через **Mixin**: подменяет активный аккаунт, заход на сервер и загрузку скинов. Никаких javaagent и правки JVM на лету.
+- Одна кодовая база на все версии через [Stonecutter](https://stonecutter.kikugie.dev/).
 
 ## 🖥️ Для владельцев серверов
 
-Хотите пускать игроков с этим модом на свой прокси-сервер (Velocity) прозрачно вместе с лицушниками? 
+Чтобы пускать игроков с Ely-аккаунтами, сервер должен проверять их через Ely.by, например через [authlib-injector](https://docs.ely.by/en/authlib-injector.html) с Ely.by. Для Velocity, где играют и лицензионщики, и Ely-игроки, в [релизах](https://github.com/HorniCompany/Ely4Everyone/releases) есть плагин `ely4everyone-velocity-plugin`. Подробный гайд пока пишется.
 
-Наш проект поставляется со специальным гибридным плагином для Velocity! Вам всё еще нужен `authlib-injector`, но теперь он настраивается на наш локальный `velocity-plugin` (hybrid auth-host), который сам маршрутизирует игроков.
+## 🧑‍💻 Сборка
 
-**Как настроить Proxy:**
-1. Скачайте свежую версию [authlib-injector](https://github.com/yushijinhun/authlib-injector/releases);
-2. Поместите `authlib-injector.jar` в папку с вашим Velocity;
-3. Добавьте в `start.bat` / `start.sh` этот аргумент:
-   ```bash
-   -Dauthlibinjector.ignoredPackages=dev.ely4everyone.velocity,dev.ely4everyone.shared.host -Dauthlibinjector.mojangNamespace=enabled -javaagent:authlib-injector.jar=http://127.0.0.1:18086
-   ```
-4. Убедитесь, что на Backend-серверах (Paper/Purpur) стоит `online-mode=false`.
+```bash
+./gradlew build
+```
 
-*(Подробнее о Self-Hosting узлах читайте в документации на GitHub)*
+Gradle сам скачает нужные JDK (21 и 25). Jar лежат в `mod/versions/<версия>/build/libs/`.
 
----
+## 📄 Лицензия
 
-### ⚠️ Статус проекта
-Мод находится в стадии `Альфа-теста`. Возможны мелкие недоработки, но основная функциональность проверена и отлично работает на Fabric 1.21.1.
-Мы активно собираем фидбек! Присоединяйтесь к тестированию.
-
-`P.S: Хрюшка не обрезается.` 🐷🍷
+[MIT](LICENSE). Ely.by не связан с проектом.
