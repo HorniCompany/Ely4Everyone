@@ -7,12 +7,12 @@ import dev.ely4everyone.mod.session.ClientSessionState
 import dev.ely4everyone.mod.session.ClientSessionStore
 import dev.ely4everyone.shared.protocol.AuthProtocolCodec
 import dev.ely4everyone.shared.protocol.LoginResponse
+import io.netty.buffer.Unpooled
 import io.netty.channel.ChannelFutureListener
 import java.time.Instant
 import java.util.concurrent.CompletableFuture
 import java.util.function.Consumer
 import net.fabricmc.fabric.api.client.networking.v1.ClientLoginNetworking
-import net.fabricmc.fabric.api.networking.v1.PacketByteBufs
 import net.minecraft.client.Minecraft
 import net.minecraft.client.multiplayer.ClientHandshakePacketListenerImpl
 import net.minecraft.network.FriendlyByteBuf
@@ -77,7 +77,7 @@ object LoginQueryResponder {
             } else {
                 logger.info("Issued challenge-bound Ely login ticket for nonce {}.", nonce)
                 val responsePayload = AuthProtocolCodec.encodeResponse(LoginResponse(ticket = issuedTicket.ticket))
-                PacketByteBufs.create().apply {
+                FriendlyByteBuf(Unpooled.buffer()).apply {
                     writeBytes(responsePayload)
                 }
             }
@@ -88,7 +88,7 @@ object LoginQueryResponder {
         // According to Fabric API, returning null signals that the client doesn't understand the channel.
         // We reply with an empty packet to explicitly say we understood but failed to provide a ticket.
         val responsePayload = AuthProtocolCodec.encodeResponse(LoginResponse(ticket = null))
-        return PacketByteBufs.create().apply {
+        return FriendlyByteBuf(Unpooled.buffer()).apply {
             writeBytes(responsePayload)
         }
     }

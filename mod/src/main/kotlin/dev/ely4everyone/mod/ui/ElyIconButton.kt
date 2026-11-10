@@ -2,7 +2,6 @@ package dev.ely4everyone.mod.ui
 
 import dev.ely4everyone.mod.session.TokenHealthMonitor
 import dev.ely4everyone.mod.session.TokenHealthMonitor.TokenHealth
-import net.minecraft.client.gui.GuiGraphics
 import net.minecraft.client.gui.components.AbstractButton
 import net.minecraft.client.gui.components.Tooltip
 import net.minecraft.client.gui.narration.NarrationElementOutput
@@ -34,7 +33,10 @@ class ElyIconButton(
         setTooltip(Tooltip.create(Component.literal(TokenHealthMonitor.tooltipText())))
     }
 
-    override fun renderContents(context: GuiGraphics, mouseX: Int, mouseY: Int, delta: Float) {
+    //? if >=26.1 {
+    /*override fun extractContents(context: ElyGraphics, mouseX: Int, mouseY: Int, delta: Float) {
+    *///?} else
+    override fun renderContents(context: ElyGraphics, mouseX: Int, mouseY: Int, delta: Float) {
         val drawX = x
         val drawY = y
 
@@ -80,7 +82,7 @@ class ElyIconButton(
         }
     }
 
-    private fun drawBorder(context: GuiGraphics, drawX: Int, drawY: Int, color: Int) {
+    private fun drawBorder(context: ElyGraphics, drawX: Int, drawY: Int, color: Int) {
         context.fill(drawX - 1, drawY - 1, drawX + width + 1, drawY, color)
         context.fill(drawX - 1, drawY + height, drawX + width + 1, drawY + height + 1, color)
         context.fill(drawX - 1, drawY, drawX, drawY + height, color)

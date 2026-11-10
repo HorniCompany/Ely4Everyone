@@ -22,6 +22,9 @@ object TitleScreenIntegration {
                 client.setScreen(ElyAuthScreen(screen))
             }
 
+            //? if >=26.1 {
+            /*Screens.getWidgets(screen).add(button)
+            *///?} else
             Screens.getButtons(screen).add(button)
         }
     }

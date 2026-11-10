@@ -1,9 +1,9 @@
+import java.util.Properties
+import net.fabricmc.loom.api.LoomGradleExtensionAPI
+
 plugins {
-    id("net.fabricmc.fabric-loom-remap")
     kotlin("jvm")
 }
-
-import java.util.Properties
 
 // Per node: mod/versions/<version>/gradle.properties
 val minecraftVersion: String by project
@@ -11,6 +11,15 @@ val minecraftDependency: String by project
 val javaVersion: String by project
 val fabricLoaderVersion: String by project
 val fabricApiVersion: String by project
+
+// Up to 1.21.11 Minecraft ships obfuscated and Loom remaps it (fabric-loom-remap, modImplementation,
+// remapJar). From 26.1 it is not obfuscated: plain fabric-loom, implementation, jar.
+val minecraftObfuscated: Boolean = (findProperty("minecraftObfuscated") as String?).toBoolean()
+apply(plugin = if (minecraftObfuscated) "net.fabricmc.fabric-loom-remap" else "net.fabricmc.fabric-loom")
+val loom = extensions.getByType<LoomGradleExtensionAPI>()
+val modDependency = if (minecraftObfuscated) "modImplementation" else "implementation"
+val releaseJarTask = if (minecraftObfuscated) "remapJar" else "jar"
+
 val localProperties = Properties().apply {
     val localPropertiesFile = rootProject.file("local.properties")
     if (localPropertiesFile.exists()) {
@@ -41,10 +50,12 @@ sourceSets {
 }
 
 dependencies {
-    minecraft("com.mojang:minecraft:$minecraftVersion")
-    mappings(loom.officialMojangMappings())
-    modImplementation("net.fabricmc:fabric-loader:$fabricLoaderVersion")
-    modImplementation("net.fabricmc.fabric-api:fabric-api:$fabricApiVersion")
+    "minecraft"("com.mojang:minecraft:$minecraftVersion")
+    if (minecraftObfuscated) {
+        "mappings"(loom.officialMojangMappings())
+    }
+    modDependency("net.fabricmc:fabric-loader:$fabricLoaderVersion")
+    modDependency("net.fabricmc.fabric-api:fabric-api:$fabricApiVersion")
     implementation(kotlin("stdlib"))
     testImplementation(kotlin("test"))
 }
@@ -79,16 +90,16 @@ tasks.processResources {
     }
 }
 
-loom {
-    // Every version shares mod/run (options, worlds, servers list).
-    runConfigs.all { runDir = "../../run" }
-}
+// Game folder for runClient, relative to the node: mod/run by default. Newer versions get their own
+// (runDir in the node properties) so opening a world there never upgrades the 1.21.x worlds.
+val gameRunDir: String = (findProperty("runDir") as String?) ?: "../../run"
+loom.runConfigs.all { runDir = gameRunDir }
 
 val syncToLocalMods by tasks.registering(Copy::class) {
     group = "deployment"
     description = "Builds the Ely4Everyone mod jar and copies it into the configured local mods folder."
 
-    dependsOn(tasks.named("remapJar"))
+    dependsOn(tasks.named(releaseJarTask))
 
     from(layout.buildDirectory.dir("libs")) {
         include(localModJarPattern)
