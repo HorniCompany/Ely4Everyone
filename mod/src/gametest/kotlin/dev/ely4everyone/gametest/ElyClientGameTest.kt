@@ -29,7 +29,7 @@ class ElyClientGameTest : FabricClientGameTest {
         context.runOnClient<RuntimeException> { mc ->
             mc.options.renderDistance().set(2)
             mc.options.simulationDistance().set(5)
-            mc.options.framerateLimit().set(30)
+            mc.options.framerateLimit().set(10)
         }
         titleScreenHasElyButton(context)
         elyScreenOpens(context, "ely-screen-en")

@@ -82,6 +82,9 @@ jobs:
           # Mesa software rendering. 26.3 opens its window with SDL3, which found no usable GLX
           # visual under Xvfb; EGL works there.
           LIBGL_ALWAYS_SOFTWARE: "1"
+          # llvmpipe renders on every core by default and starves the integrated server on the
+          # 2-core runner ("Can't keep up", world load timeout on 1.21.11).
+          LP_NUM_THREADS: "1"
           SDL_VIDEO_FORCE_EGL: "1"
         run: |
           chmod +x gradlew
