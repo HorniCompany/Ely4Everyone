@@ -5,6 +5,7 @@ import com.mojang.authlib.minecraft.MinecraftProfileTextures
 import com.mojang.authlib.properties.Property
 import dev.ely4everyone.mod.session.ClientSessionState
 import dev.ely4everyone.mod.session.ClientSessionStore
+import dev.ely4everyone.mod.skin.ActiveSkinIdentity
 import net.minecraft.client.User
 
 sealed interface ActiveElyIdentityState {
@@ -37,6 +38,15 @@ object ActiveElyIdentityManager {
     fun currentTexturesPropertyOrNull(): Property? = activeStateOrNull()?.texturesProperty
 
     fun currentProfileTexturesOrNull(): MinecraftProfileTextures? = activeStateOrNull()?.profileTextures
+
+    fun currentSkinIdentityOrNull(): ActiveSkinIdentity? {
+        val active = activeStateOrNull() ?: return null
+        return ActiveSkinIdentity(
+            id = active.gameProfile.id,
+            name = active.gameProfile.name,
+            hasTextures = active.profileTextures != null,
+        )
+    }
 
     fun refreshFromStore(currentSession: User?): Boolean {
         if (currentSession == null) {

@@ -183,18 +183,19 @@ object JsonFieldReader {
             ?.groupValues
             ?.get(1)
             ?: return emptyList()
-        val propertyRegex = Regex(
-            """\{\s*"name"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"value"\s*:\s*"((?:\\.|[^"\\])*)"(?:\s*,\s*"signature"\s*:\s*"((?:\\.|[^"\\])*)")?\s*}""",
-            setOf(RegexOption.DOT_MATCHES_ALL),
-        )
-        return propertyRegex.findAll(propertiesSection).map { match ->
+        // Fields are read one by one: Ely.by sends name, signature, value, while Mojang sends
+        // name, value, signature. A fixed order silently lost every Ely skin.
+        return PROPERTY_OBJECT.findAll(propertiesSection).mapNotNull { match ->
+            val property = match.value
             AuthProfileProperty(
-                name = decodeJsonString(match.groupValues[1]),
-                value = decodeJsonString(match.groupValues[2]),
-                signature = match.groupValues.getOrNull(3)?.takeIf { it.isNotBlank() }?.let(::decodeJsonString),
+                name = readString(property, "name") ?: return@mapNotNull null,
+                value = readString(property, "value") ?: return@mapNotNull null,
+                signature = readString(property, "signature")?.takeIf { it.isNotBlank() },
             )
         }.toList()
     }
+
+    private val PROPERTY_OBJECT = Regex("""\{[^{}]*}""")
 
     fun readProfile(json: String, authority: AuthAuthority): RemoteGameProfile? {
         val rawId = readString(json, "id") ?: return null

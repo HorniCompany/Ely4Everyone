@@ -4,6 +4,7 @@ import dev.ely4everyone.mod.Ely4EveryoneClientMod
 import dev.ely4everyone.mod.identity.MinecraftClientSessionBridge
 import dev.ely4everyone.mod.session.ClientSessionState
 import dev.ely4everyone.mod.session.ClientSessionStore
+import dev.ely4everyone.mod.skin.OwnSkinTextures
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.CompletableFuture
@@ -158,6 +159,33 @@ object AuthWorkflowManager {
             status = AuthFlowStatus.IDLE,
             message = "Авторизация отменена.",
         )
+    }
+
+    /**
+     * Loads our own skin from Ely.by into the saved login when it is missing (0.2.x lost it, see
+     * JsonFieldReader.readProperties) or the player changed it on the site, then applies it.
+     * Blocks on the network: call it off the render thread.
+     */
+    fun refreshOwnSkin(): Boolean {
+        val session = ClientSessionStore.load()
+        if (!session.isSignedIn()) return false
+        val uuid = session.elyUuid?.takeIf { it.isNotBlank() } ?: return false
+        val textures = runCatching { ElyDirectLogin.fetchTextures(uuid) }
+            .onFailure { logger.warn("Could not load the Ely.by skin: {}", it.toString()) }
+            .getOrNull() ?: return false
+        if (!OwnSkinTextures.needsUpdate(session.elyTexturesValue, textures.value)) return false
+
+        val saved = ClientSessionStore.tryWithLock {
+            val current = ClientSessionStore.load()
+            if (current.elyUuid != uuid) return@tryWithLock false
+            ClientSessionStore.save(current.copy(elyTexturesValue = textures.value, elyTexturesSignature = textures.signature))
+            true
+        } ?: false
+        if (saved) {
+            logger.info("Saved the Ely.by skin of {} into the login.", session.elyUsername)
+            Minecraft.getInstance().execute { MinecraftClientSessionBridge.refreshActiveIdentity() }
+        }
+        return saved
     }
 
     /** Renews the stored login: directly at Ely.by, or through the auth host for older sessions. */

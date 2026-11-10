@@ -1,8 +1,10 @@
 package dev.ely4everyone.mod.auth
 
+import dev.ely4everyone.shared.auth.AuthProfileProperty
 import dev.ely4everyone.shared.host.JsonFieldReader
 import dev.ely4everyone.shared.host.UpstreamHttp
 import java.net.URI
+import org.slf4j.LoggerFactory
 import java.net.URLEncoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -58,6 +60,8 @@ sealed interface DeviceTokenPoll {
  * currently drops `code_challenge`, so it cannot finish for public clients yet.
  */
 object ElyDirectLogin {
+    private val logger = LoggerFactory.getLogger("Ely4Everyone/DirectLogin")
+
     /** Public by design: desktop clients on Ely.by have no secret, PKCE or the device code protect the login. */
     const val CLIENT_ID: String = "ely4everyone1"
     const val SCOPES: String = "account_info minecraft_server_session offline_access"
@@ -122,21 +126,9 @@ object ElyDirectLogin {
             ?: throw IllegalStateException("Ely.by account response has no uuid")
 
         // Skins are nice to have: a failed lookup must not fail the login.
-        val textures = runCatching {
-            val profile = httpClient.send(
-                // Without unsigned=false Ely, like Mojang, leaves the signature out.
-                UpstreamHttp.request(URI.create(SESSION_PROFILE_URL + uuid.replace("-", "") + "?unsigned=false"))
-                    .timeout(REQUEST_TIMEOUT)
-                    .GET()
-                    .build(),
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
-            )
-            if (profile.statusCode() in 200..299) {
-                JsonFieldReader.readProperties(profile.body()).firstOrNull { it.name == "textures" }
-            } else {
-                null
-            }
-        }.getOrNull()
+        val textures = runCatching { fetchTextures(uuid) }
+            .onFailure { logger.warn("Could not load the Ely.by skin of {}: {}", username, it.toString()) }
+            .getOrNull()
 
         return ElyProfile(
             username = username,
@@ -145,6 +137,25 @@ object ElyDirectLogin {
             texturesSignature = textures?.signature,
         )
     }
+
+    /** Signed skin textures of an Ely account, or null if it has none. Needs no login. */
+    fun fetchTextures(uuid: String): AuthProfileProperty? {
+        val response = httpClient.send(
+            // Without unsigned=false Ely, like Mojang, leaves the signature out.
+            UpstreamHttp.request(URI.create(SESSION_PROFILE_URL + uuid.replace("-", "") + "?unsigned=false"))
+                .timeout(REQUEST_TIMEOUT)
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        if (response.statusCode() !in 200..299) {
+            throw IllegalStateException("Ely.by session server answered ${response.statusCode()}")
+        }
+        return texturesFrom(response.body())
+    }
+
+    fun texturesFrom(profileJson: String): AuthProfileProperty? =
+        JsonFieldReader.readProperties(profileJson).firstOrNull { it.name == "textures" }
 
     fun parseDeviceCode(body: String): ElyDeviceCode {
         val deviceCode = JsonFieldReader.readString(body, "device_code")

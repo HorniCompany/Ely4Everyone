@@ -5,6 +5,7 @@ import dev.ely4everyone.mod.identity.ActiveElyIdentityManager
 import dev.ely4everyone.mod.skin.ElySkinResolver
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.CompletableFuture
 import net.minecraft.client.Minecraft
 import org.slf4j.LoggerFactory
 
@@ -123,6 +124,10 @@ object TokenHealthMonitor {
             }
             lastAutoRefreshAttempt = Instant.now()
         }
+
+        // Before any world loads, so even our first skin lookup sees the textures.
+        runCatching { AuthWorkflowManager.refreshOwnSkin() }
+            .onFailure { logger.warn("Boot-time skin check failed: {}", it.message) }
     }
 
     fun tick(client: Minecraft) {
@@ -236,6 +241,8 @@ object TokenHealthMonitor {
                 logger.debug("Skin refreshed for '{}'", username)
             }
         }
+        // Our own saved skin too, so a skin changed on the site shows up after a reconnect.
+        CompletableFuture.runAsync { AuthWorkflowManager.refreshOwnSkin() }
     }
 
     /**

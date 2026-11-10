@@ -3,6 +3,8 @@ package dev.ely4everyone.mod.mixin.client
 import com.mojang.authlib.GameProfile
 import dev.ely4everyone.mod.identity.ActiveElyIdentityManager
 import dev.ely4everyone.mod.skin.ElySkinResolver
+import dev.ely4everyone.mod.skin.SkinSource
+import dev.ely4everyone.mod.skin.SkinSourcePolicy
 import java.util.Optional
 import java.util.concurrent.CompletableFuture
 import net.minecraft.client.resources.DefaultPlayerSkin
@@ -30,22 +32,26 @@ abstract class PlayerSkinProviderMixin {
         cir: CallbackInfoReturnable<CompletableFuture<Optional<PlayerSkin>>>,
     ) {
         val activeState = ActiveElyIdentityManager.activeStateOrNull() ?: return
-        if (activeState.gameProfile.id != profile.id || activeState.gameProfile.name != profile.name) {
-            return
+        val provider = this as PlayerSkinProviderInvoker
+        when (SkinSourcePolicy.choose(profile.id, profile.name, ActiveElyIdentityManager.currentSkinIdentityOrNull())) {
+            SkinSource.OWN_TEXTURES -> {
+                val profileTextures = activeState.profileTextures ?: return
+                cir.returnValue = provider.`ely4everyone$invokeRegisterTextures`(
+                    activeState.elySession.profileId, profileTextures,
+                ).thenApply { Optional.of(it) }
+            }
+            SkinSource.OWN_ELY_LOOKUP -> {
+                val defaultSkin = DefaultPlayerSkin.get(activeState.gameProfile)
+                cir.returnValue = ElySkinResolver.resolve(profile.name).thenCompose { elyTextures ->
+                    if (elyTextures != null) {
+                        provider.`ely4everyone$invokeRegisterTextures`(profile.id, elyTextures).thenApply { Optional.of(it) }
+                    } else {
+                        CompletableFuture.completedFuture(Optional.of(defaultSkin))
+                    }
+                }.exceptionally { Optional.of(defaultSkin) }
+            }
+            SkinSource.OTHER_ELY_LOOKUP, SkinSource.VANILLA -> Unit
         }
-
-        val profileTextures = activeState.profileTextures
-        if (profileTextures != null) {
-            val provider = this as PlayerSkinProviderInvoker
-            cir.returnValue = provider.`ely4everyone$invokeRegisterTextures`(
-                activeState.elySession.profileId, profileTextures,
-            ).thenApply { Optional.of(it) }
-            return
-        }
-
-        cir.returnValue = CompletableFuture.completedFuture(
-            Optional.of(DefaultPlayerSkin.get(activeState.gameProfile)),
-        )
     }
 
     /**
@@ -63,23 +69,16 @@ abstract class PlayerSkinProviderMixin {
         profile: GameProfile,
         cir: CallbackInfoReturnable<CompletableFuture<Optional<PlayerSkin>>>,
     ) {
-        // Skip if this is our active Ely identity (already handled by HEAD inject)
-        val activeState = ActiveElyIdentityManager.activeStateOrNull()
-        if (activeState != null &&
-            activeState.gameProfile.id == profile.id &&
-            activeState.gameProfile.name == profile.name
-        ) {
+        // Our own player was already handled at HEAD.
+        if (SkinSourcePolicy.choose(profile.id, profile.name, ActiveElyIdentityManager.currentSkinIdentityOrNull()) != SkinSource.OTHER_ELY_LOOKUP) {
             return
         }
-
-        val username = profile.name
-        if (username.isNullOrBlank()) return
 
         val vanillaFuture = cir.returnValue ?: return
         val provider = this as PlayerSkinProviderInvoker
 
         // Wrap: check Ely.by first, fallback to vanilla
-        cir.returnValue = ElySkinResolver.resolve(username).thenCompose { elyTextures ->
+        cir.returnValue = ElySkinResolver.resolve(profile.name).thenCompose { elyTextures ->
             if (elyTextures != null) {
                 // Ely.by has a skin for this player — use it!
                 provider.`ely4everyone$invokeRegisterTextures`(profile.id, elyTextures)
