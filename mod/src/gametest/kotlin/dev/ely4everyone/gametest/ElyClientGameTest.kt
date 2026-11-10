@@ -73,6 +73,7 @@ class ElyClientGameTest : FabricClientGameTest {
     }
 
     private fun singleplayer(context: ClientGameTestContext) {
+        val watchdog = serverThreadWatchdog()
         context.worldBuilder().adjustSettings { state ->
             // Superflat generates instantly; the default world timed out on CI (1.21.11).
             val presets = state.normalPresetList + state.altPresetList
@@ -87,7 +88,24 @@ class ElyClientGameTest : FabricClientGameTest {
             context.waitTicks(100)
             context.takeScreenshot("singleplayer")
         }
+        watchdog.interrupt()
     }
+
+    /** CI diagnostics: prints where the integrated server thread is while the world loads. */
+    private fun serverThreadWatchdog(): Thread = Thread({
+        try {
+            Thread.sleep(10_000)
+            repeat(6) {
+                Thread.getAllStackTraces().filterKeys { it.name == "Server thread" || it.name.startsWith("Worker-Main") }
+                    .forEach { (thread, stack) ->
+                        println("[ely4everyone-gametest] ${thread.name} ${thread.state}:\n" +
+                            stack.take(25).joinToString("\n") { "    at $it" })
+                    }
+                Thread.sleep(10_000)
+            }
+        } catch (_: InterruptedException) {
+        }
+    }, "ely4everyone-gametest-watchdog").apply { isDaemon = true; start() }
 
     private fun dedicatedServer(context: ClientGameTestContext) {
         val properties = Properties().apply {
