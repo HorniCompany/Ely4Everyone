@@ -5,10 +5,12 @@ import dev.ely4everyone.mod.identity.MinecraftClientSessionBridge
 import dev.ely4everyone.mod.session.ClientSessionState
 import dev.ely4everyone.mod.session.ClientSessionStore
 import dev.ely4everyone.mod.skin.OwnSkinTextures
+import dev.ely4everyone.mod.ui.Lang
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.CompletableFuture
 import net.minecraft.client.Minecraft
+import net.minecraft.network.chat.Component
 import org.slf4j.LoggerFactory
 
 enum class AuthFlowStatus {
@@ -21,7 +23,8 @@ enum class AuthFlowStatus {
 
 data class AuthFlowState(
     val status: AuthFlowStatus = AuthFlowStatus.IDLE,
-    val message: String = "Готов к входу через Ely.by",
+    /** Translatable, resolved when drawn: see [Lang]. */
+    val message: Component = Lang.tr("state.ready"),
     /** Code the player confirms on Ely.by while [status] is [AuthFlowStatus.POLLING]. */
     val userCode: String? = null,
     /** Where to type [userCode] by hand, e.g. from a phone. */
@@ -60,7 +63,10 @@ object AuthWorkflowManager {
         data object Wait : PollOutcome
         data object SlowDown : PollOutcome
         data class Done(val tokens: ElyTokens, val profile: ElyProfile) : PollOutcome
-        data class Error(val message: String) : PollOutcome
+        data class Error(
+            val message: String,
+            val reason: DeviceTokenPoll.FailReason = DeviceTokenPoll.FailReason.OTHER,
+        ) : PollOutcome
     }
 
     @Volatile
@@ -78,7 +84,7 @@ object AuthWorkflowManager {
 
     fun currentState(): AuthFlowState = state
 
-    fun resetUiState(message: String = "Готов к входу через Ely.by") {
+    fun resetUiState(message: Component = Lang.tr("state.ready")) {
         if (loginInProgress) {
             return
         }
@@ -98,7 +104,7 @@ object AuthWorkflowManager {
         loginInProgress = true
         state = AuthFlowState(
             status = AuthFlowStatus.OPENING_BROWSER,
-            message = "Получаю код входа от Ely.by...",
+            message = Lang.tr("state.requesting_code"),
         )
 
         // Off the render thread: Ely may be slow or unreachable.
@@ -113,7 +119,7 @@ object AuthWorkflowManager {
                     if (error != null || code == null) {
                         val cause = error?.cause ?: error
                         logger.warn("Could not get a login code from Ely.by", cause)
-                        fail("Ely.by недоступен (${cause?.message ?: cause?.javaClass?.simpleName ?: "unknown error"}).")
+                        fail(Lang.tr("state.ely_unreachable", cause?.message ?: cause?.javaClass?.simpleName ?: "unknown error"))
                         return@execute
                     }
                     beginWaiting(code)
@@ -134,7 +140,7 @@ object AuthWorkflowManager {
         logger.info("Waiting for the player to confirm the Ely.by login code")
         state = AuthFlowState(
             status = AuthFlowStatus.POLLING,
-            message = "Подтверди вход в браузере, игра подхватит его сама...",
+            message = Lang.tr("state.confirm_in_browser"),
             userCode = code.userCode,
             verificationUri = code.verificationUri,
         )
@@ -148,7 +154,7 @@ object AuthWorkflowManager {
         MinecraftClientSessionBridge.restoreVanillaIdentity()
         state = AuthFlowState(
             status = AuthFlowStatus.IDLE,
-            message = "Локальная Ely-сессия очищена.",
+            message = Lang.tr("state.logged_out"),
         )
     }
 
@@ -156,7 +162,7 @@ object AuthWorkflowManager {
         resetPendingLogin()
         state = AuthFlowState(
             status = AuthFlowStatus.IDLE,
-            message = "Авторизация отменена.",
+            message = Lang.tr("state.cancelled"),
         )
     }
 
@@ -269,7 +275,7 @@ object AuthWorkflowManager {
                 logger.warn("Refresh failed with status {}", result.status)
                 state = AuthFlowState(
                     status = AuthFlowStatus.ERROR,
-                    message = "Не удалось продлить вход (${result.status}: ${result.error}). Войди через Ely.by заново.",
+                    message = Lang.tr("state.refresh_failed", result.status.toString(), result.error.toString()),
                 )
                 false
             }
@@ -286,7 +292,7 @@ object AuthWorkflowManager {
         }
         val now = System.currentTimeMillis()
         if (now >= current.expiresAtMillis) {
-            fail("код истёк, попробуй ещё раз.")
+            fail(Lang.tr("state.code_expired"))
             return
         }
         if (now < current.nextPollAtMillis) {
@@ -315,7 +321,7 @@ object AuthWorkflowManager {
             when (val result = ElyDirectLogin.pollDeviceToken(deviceCode)) {
                 DeviceTokenPoll.Pending -> PollOutcome.Wait
                 DeviceTokenPoll.SlowDown -> PollOutcome.SlowDown
-                is DeviceTokenPoll.Failed -> PollOutcome.Error(result.error)
+                is DeviceTokenPoll.Failed -> PollOutcome.Error(result.error, result.reason)
                 is DeviceTokenPoll.Granted -> PollOutcome.Done(result.tokens, ElyDirectLogin.fetchProfile(result.tokens.accessToken))
             }
         } catch (exception: Exception) {
@@ -335,7 +341,13 @@ object AuthWorkflowManager {
             }
             is PollOutcome.Error -> {
                 logger.warn("Ely.by refused the login: {}", outcome.message)
-                fail(outcome.message)
+                fail(
+                    when (outcome.reason) {
+                        DeviceTokenPoll.FailReason.DENIED -> Lang.tr("state.denied")
+                        DeviceTokenPoll.FailReason.EXPIRED -> Lang.tr("state.code_expired")
+                        DeviceTokenPoll.FailReason.OTHER -> Component.literal(outcome.message)
+                    },
+                )
             }
             is PollOutcome.Done -> finishLogin(outcome.tokens, outcome.profile)
         }
@@ -359,7 +371,7 @@ object AuthWorkflowManager {
         resetPendingLogin()
         state = AuthFlowState(
             status = AuthFlowStatus.SUCCESS,
-            message = "Вход завершен: ${profile.username}",
+            message = Lang.tr("state.success", profile.username),
         )
         logger.info("Stored Ely login for {} ({})", profile.username, profile.uuid)
     }
@@ -369,11 +381,11 @@ object AuthWorkflowManager {
         return Instant.now().plus(lifetime)
     }
 
-    private fun fail(message: String) {
+    private fun fail(reason: Component) {
         resetPendingLogin()
         state = AuthFlowState(
             status = AuthFlowStatus.ERROR,
-            message = "Авторизация не удалась: $message",
+            message = Lang.tr("state.failed", reason),
         )
     }
 

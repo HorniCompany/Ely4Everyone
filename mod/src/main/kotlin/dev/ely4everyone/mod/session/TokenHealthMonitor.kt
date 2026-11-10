@@ -3,10 +3,12 @@ package dev.ely4everyone.mod.session
 import dev.ely4everyone.mod.auth.AuthWorkflowManager
 import dev.ely4everyone.mod.identity.ActiveElyIdentityManager
 import dev.ely4everyone.mod.skin.ElySkinResolver
+import dev.ely4everyone.mod.ui.Lang
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.CompletableFuture
 import net.minecraft.client.Minecraft
+import net.minecraft.network.chat.Component
 import org.slf4j.LoggerFactory
 
 /**
@@ -63,32 +65,32 @@ object TokenHealthMonitor {
     /**
      * Returns a human-readable remaining time string, or null if not applicable.
      */
-    fun remainingTimeText(): String? {
+    fun remainingTimeText(): Component? {
         val session = ClientSessionStore.load()
         val expiresAt = session.authSessionExpiresAt ?: return null
         val remaining = Duration.between(Instant.now(), expiresAt)
-        if (remaining.isNegative) return "Истёк"
+        if (remaining.isNegative) return Lang.tr("time.expired")
 
         val hours = remaining.toHours()
         val minutes = remaining.toMinutes() % 60
         return when {
-            hours >= 24 -> "${remaining.toDays()}д ${hours % 24}ч"
-            hours >= 1 -> "${hours}ч ${minutes}мин"
-            else -> "${remaining.toMinutes()}мин"
+            hours >= 24 -> Lang.tr("time.days_hours", remaining.toDays(), hours % 24)
+            hours >= 1 -> Lang.tr("time.hours_minutes", hours, minutes)
+            else -> Lang.tr("time.minutes", remaining.toMinutes())
         }
     }
 
     /**
      * Returns tooltip text for the title screen icon button.
      */
-    fun tooltipText(): String {
+    fun tooltipText(): Component {
         val remaining = remainingTimeText()
-        val suffix = if (remaining != null) " ($remaining)" else ""
+        val suffix: Component = if (remaining != null) Component.literal(" (").append(remaining).append(")") else Component.empty()
         return when (health) {
-            TokenHealth.HEALTHY -> "✅ Сессия активна"
-            TokenHealth.EXPIRING_SOON -> "⚠ Сессия скоро истечёт$suffix"
-            TokenHealth.EXPIRED -> "❌ Сессия истекла — войдите заново$suffix"
-            TokenHealth.NOT_AUTHENTICATED -> "Войти через Ely.by"
+            TokenHealth.HEALTHY -> Lang.tr("tooltip.healthy")
+            TokenHealth.EXPIRING_SOON -> Lang.tr("tooltip.expiring", suffix)
+            TokenHealth.EXPIRED -> Lang.tr("tooltip.expired", suffix)
+            TokenHealth.NOT_AUTHENTICATED -> Lang.tr("tooltip.login")
         }
     }
 

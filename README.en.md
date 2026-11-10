@@ -27,6 +27,7 @@
 - 🌐 **Join servers with Ely.by authentication** using your Ely.by account.
 - 🔒 **Your login stays out of modpacks.** Tokens live in the system password store (Windows) or in a private file in your user folder, never in `config/`. Exporting a modpack can't leak them, and one login works in every instance.
 - 🔄 **The session renews itself**, no need to log in again every day.
+- 🌍 **English and Russian**, following the game language.
 
 ## 📸 Screenshots
 
@@ -48,9 +49,9 @@
    | 1.21.11 | `ely4everyone-mod-…+1.21.11.jar` | 21 |
 
 3. Put the jar into your `mods` folder and start the game.
-4. On the title screen press the **E** button left of "Options", then "Войти через Ely.by" (log in with Ely.by) and confirm on the Ely.by page that opens.
+4. On the title screen press the **E** button left of "Options", then "Log in with Ely.by" and confirm on the Ely.by page that opens.
 
-The "Выйти" (log out) button on the same screen switches the game back to your usual account. The in-game text is Russian for now; translations are planned.
+The "Log out" button on the same screen switches the game back to your usual account. The mod speaks English, and Russian when the game is set to Russian.
 
 ## 🛠️ How it works
 

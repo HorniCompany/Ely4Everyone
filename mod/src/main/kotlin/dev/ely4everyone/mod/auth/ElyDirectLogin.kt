@@ -45,7 +45,10 @@ sealed interface DeviceTokenPoll {
 
     data class Granted(val tokens: ElyTokens) : DeviceTokenPoll
 
-    data class Failed(val error: String) : DeviceTokenPoll
+    /** [error] is Ely's technical text for the log; [reason] picks what the player is shown. */
+    data class Failed(val error: String, val reason: FailReason = FailReason.OTHER) : DeviceTokenPoll
+
+    enum class FailReason { DENIED, EXPIRED, OTHER }
 }
 
 /**
@@ -185,8 +188,8 @@ object ElyDirectLogin {
         return when (val error = JsonFieldReader.readString(body, "error")) {
             "authorization_pending" -> DeviceTokenPoll.Pending
             "slow_down" -> DeviceTokenPoll.SlowDown
-            "access_denied" -> DeviceTokenPoll.Failed("вход отклонён на Ely.by.")
-            "expired_token" -> DeviceTokenPoll.Failed("код истёк, попробуй ещё раз.")
+            "access_denied" -> DeviceTokenPoll.Failed("access_denied", DeviceTokenPoll.FailReason.DENIED)
+            "expired_token" -> DeviceTokenPoll.Failed("expired_token", DeviceTokenPoll.FailReason.EXPIRED)
             else -> DeviceTokenPoll.Failed(describeError(body, statusCode, error))
         }
     }

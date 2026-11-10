@@ -55,7 +55,7 @@ class ElyAuthScreen(
     private var workingConfig: ModConfig = ModConfigStore.load()
     private var catalog = rebuildCatalog()
     private var selectedIndex: Int = 0
-    private var errorMessage: String = ""
+    private var errorMessage: Component = Component.empty()
     private val openTime = System.currentTimeMillis()
 
     // ── Widgets (initialized in init()) ──
@@ -129,7 +129,7 @@ class ElyAuthScreen(
         addRenderableWidget(customHostField)
 
         loginButton = addRenderableWidget(
-            Button.builder(Component.literal("Войти через Ely.by")) {
+            Button.builder(Lang.tr("button.login")) {
                 saveConfig()
                 AuthWorkflowManager.startBrowserLogin()
                 mode = Mode.POLLING
@@ -139,7 +139,7 @@ class ElyAuthScreen(
 
         // ── SUCCESS mode: refresh session button ──
         refreshSessionButton = addRenderableWidget(
-            Button.builder(Component.literal("Обновить сессию")) {
+            Button.builder(Lang.tr("button.refresh")) {
                 val success = AuthWorkflowManager.refreshSession()
                 if (success) {
                     TokenHealthMonitor.forceReevaluate()
@@ -156,7 +156,7 @@ class ElyAuthScreen(
 
         // ── POLLING mode widgets ──
         cancelButton = addRenderableWidget(
-            Button.builder(Component.literal("Отмена")) {
+            Button.builder(Lang.tr("button.cancel")) {
                 AuthWorkflowManager.cancelCurrentAttempt()
                 mode = Mode.LOGIN
                 refreshWidgets()
@@ -165,7 +165,7 @@ class ElyAuthScreen(
 
         // ── ERROR mode widgets ──
         retryButton = addRenderableWidget(
-            Button.builder(Component.literal("Попробовать снова")) {
+            Button.builder(Lang.tr("button.retry")) {
                 AuthWorkflowManager.resetUiState()
                 mode = Mode.LOGIN
                 refreshWidgets()
@@ -174,7 +174,7 @@ class ElyAuthScreen(
 
         // ── SUCCESS mode widgets ──
         logoutButton = addRenderableWidget(
-            Button.builder(Component.literal("Выйти")) {
+            Button.builder(Lang.tr("button.logout")) {
                 AuthWorkflowManager.clearSession()
                 clearPreviewTexture()
                 TokenHealthMonitor.forceReevaluate()
@@ -183,7 +183,7 @@ class ElyAuthScreen(
             }.bounds(contentLeft, btnY + 50, smallButtonWidth, buttonHeight).build(),
         )
         doneButton = addRenderableWidget(
-            Button.builder(Component.literal("Готово")) {
+            Button.builder(Lang.tr("button.done")) {
                 saveConfig()
                 onClose()
             }.bounds(contentLeft + buttonWidth - smallButtonWidth, btnY + 50, smallButtonWidth, buttonHeight).build(),
@@ -200,7 +200,7 @@ class ElyAuthScreen(
 
         // Always invisible close/done
         closeButton = addRenderableWidget(
-            Button.builder(Component.literal("Закрыть")) {
+            Button.builder(Lang.tr("button.close")) {
                 saveConfig()
                 onClose()
             }.bounds(contentLeft, btnY + 80, buttonWidth, buttonHeight).build(),
@@ -312,17 +312,17 @@ override fun render(context: ElyGraphics, mouseX: Int, mouseY: Int, delta: Float
 }
 
 private fun renderLogin(context: ElyGraphics, panelTop: Int) {
-    context.centeredText(font, Component.literal("Играй на серверах с Ely.by"), centerX, panelTop + 14, COLOR_SUBTITLE)
+    context.centeredText(font, Lang.tr("screen.subtitle"), centerX, panelTop + 14, COLOR_SUBTITLE)
 
     // The login goes straight to Ely.by, there is no auth host to pick any more.
     val infoY = panelTop + 36
     drawTechPanel(context, centerX - 110, infoY - 6, centerX + 110, infoY + 40, 0x70000000.toInt(), 0x501E654E.toInt())
 
-    context.centeredText(font, Component.literal("Вход напрямую через Ely.by"), centerX, infoY, COLOR_TEXT)
-    context.centeredText(font, Component.literal("откроется account.ely.by"), centerX, infoY + 12, COLOR_DIM)
-    context.centeredText(font, Component.literal("без посредников"), centerX, infoY + 24, COLOR_DIM)
+    context.centeredText(font, Lang.tr("screen.login.direct"), centerX, infoY, COLOR_TEXT)
+    context.centeredText(font, Lang.tr("screen.login.opens"), centerX, infoY + 12, COLOR_DIM)
+    context.centeredText(font, Lang.tr("screen.login.no_middleman"), centerX, infoY + 24, COLOR_DIM)
 
-    loginButton.message = Component.literal("Войти через Ely.by")
+    loginButton.message = Lang.tr("button.login")
     loginButton.active = true
 }
 
@@ -330,10 +330,10 @@ private fun renderPolling(context: ElyGraphics, panelTop: Int) {
     val authState = AuthWorkflowManager.currentState()
     val userCode = authState.userCode
     if (userCode == null) {
-        context.centeredText(font, Component.literal(authState.message), centerX, panelTop + 36, COLOR_SUBTITLE)
+        context.centeredText(font, authState.message, centerX, panelTop + 36, COLOR_SUBTITLE)
     } else {
-        context.centeredText(font, Component.literal("Подтверди вход в браузере"), centerX, panelTop + 14, COLOR_ACCENT)
-        context.centeredText(font, Component.literal("выбери аккаунт и нажми «Разрешить»"), centerX, panelTop + 28, COLOR_DIM)
+        context.centeredText(font, Lang.tr("screen.polling.title"), centerX, panelTop + 14, COLOR_ACCENT)
+        context.centeredText(font, Lang.tr("screen.polling.hint"), centerX, panelTop + 28, COLOR_DIM)
 
         // The code itself, for confirming from a phone if the browser did not open here.
         val codeY = panelTop + 48
@@ -341,7 +341,7 @@ private fun renderPolling(context: ElyGraphics, panelTop: Int) {
         context.centeredText(font, Component.literal(userCode.chunked(1).joinToString(" ")), centerX, codeY, COLOR_TEXT)
 
         val pageUrl = (authState.verificationUri ?: "https://account.ely.by/code").removePrefix("https://")
-        context.centeredText(font, Component.literal("не открылся? введи код на $pageUrl"), centerX, panelTop + 72, COLOR_DIM)
+        context.centeredText(font, Lang.tr("screen.polling.manual", pageUrl), centerX, panelTop + 72, COLOR_DIM)
     }
 
     // Polling spinner animation
@@ -357,7 +357,7 @@ private fun renderSuccess(context: ElyGraphics, panelTop: Int) {
     val session = ClientSessionStore.load()
     ensurePreviewRequested(session)
 
-    context.centeredText(font, Component.literal("Вы авторизованы ✅"), centerX, panelTop + 14, COLOR_SUCCESS)
+    context.centeredText(font, Lang.tr("screen.success.title"), centerX, panelTop + 14, COLOR_SUCCESS)
 
     // Skin preview (left side)
     val skinLeft = panelLeft + 10
@@ -378,35 +378,35 @@ private fun renderSuccess(context: ElyGraphics, panelTop: Int) {
     // Info (right side)
     val infoLeft = skinLeft + 134
     val infoY = skinTop + 20
-    val username = session.elyUsername ?: "неизвестно"
+    val username: Any = session.elyUsername ?: Lang.tr("screen.success.unknown")
     val uuid = session.elyUuid ?: "-"
     val host = if (session.isDirectLogin) "Ely.by" else selectedEntry()?.displayName ?: "horni.cc"
 
     drawTechPanel(context, infoLeft - 10, infoY - 10, panelRight, skinTop + 154, 0x70000000.toInt(), 0x501E654E.toInt())
 
-    context.text(font, Component.literal("Ник: $username"), infoLeft, infoY, COLOR_TEXT)
+    context.text(font, Lang.tr("screen.success.nick", username), infoLeft, infoY, COLOR_TEXT)
     context.text(font, Component.literal("UUID: ${uuid.take(13)}..."), infoLeft, infoY + 14, COLOR_DIM)
-    context.text(font, Component.literal("Вход: $host"), infoLeft, infoY + 28, COLOR_DIM)
+    context.text(font, Lang.tr("screen.success.login_via", host), infoLeft, infoY + 28, COLOR_DIM)
 
     val health = TokenHealthMonitor.currentHealth()
     val remaining = TokenHealthMonitor.remainingTimeText()
     val (statusText, statusColor) = when (health) {
         // Ely tokens live for years, a countdown of thousands of days says nothing. Count down only near the end.
-        TokenHealth.HEALTHY -> "Сессия: активна ✅" to COLOR_SUCCESS
-        TokenHealth.EXPIRING_SOON -> (if (remaining != null) "Сессия: ⚠ $remaining" else "Сессия: скоро истечёт ⚠") to COLOR_WARNING
-        TokenHealth.EXPIRED -> "Сессия: истекла ❌" to COLOR_ERROR
-        TokenHealth.NOT_AUTHENTICATED -> "Сессия: не активна" to COLOR_DIM
+        TokenHealth.HEALTHY -> Lang.tr("session.active") to COLOR_SUCCESS
+        TokenHealth.EXPIRING_SOON -> (if (remaining != null) Lang.tr("session.expiring_in", remaining) else Lang.tr("session.expiring")) to COLOR_WARNING
+        TokenHealth.EXPIRED -> Lang.tr("session.expired") to COLOR_ERROR
+        TokenHealth.NOT_AUTHENTICATED -> Lang.tr("session.inactive") to COLOR_DIM
     }
-    context.text(font, Component.literal(statusText), infoLeft, infoY + 46, statusColor)
+    context.text(font, statusText, infoLeft, infoY + 46, statusColor)
 
     refreshSessionButton.visible = health == TokenHealth.EXPIRING_SOON
 }
 
 private fun renderError(context: ElyGraphics, panelTop: Int) {
-    context.centeredText(font, Component.literal("Ошибка авторизации ❌"), centerX, panelTop + 14, COLOR_ERROR)
+    context.centeredText(font, Lang.tr("screen.error.title"), centerX, panelTop + 14, COLOR_ERROR)
 
     val maxWidth = buttonWidth - 10
-    val wrapped = wrapText(errorMessage, maxWidth)
+    val wrapped = wrapText(errorMessage.string, maxWidth)
     wrapped.take(4).forEachIndexed { index, line ->
         context.centeredText(font, Component.literal(line), centerX, panelTop + 38 + index * 12, COLOR_DIM)
     }

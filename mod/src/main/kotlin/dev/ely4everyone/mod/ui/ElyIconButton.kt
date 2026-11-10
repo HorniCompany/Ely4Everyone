@@ -30,7 +30,7 @@ class ElyIconButton(
     }
 
     fun updateTooltip() {
-        setTooltip(Tooltip.create(Component.literal(TokenHealthMonitor.tooltipText())))
+        setTooltip(Tooltip.create(TokenHealthMonitor.tooltipText()))
     }
 
     //? if >=26.1 {
@@ -127,7 +127,7 @@ class ElyIconButton(
         private val COLOR_EXPIRING_BRIGHT = 0xFFFFD700.toInt() // Bright gold
         private val COLOR_EXPIRED = 0xFFEF4444.toInt()        // Red
 
-        private val BUTTON_LABEL = Component.literal("Ely.by auth")
+        private val BUTTON_LABEL = Lang.tr("button.icon")
         private val ICON_TEXTURE = Identifier.fromNamespaceAndPath("ely4everyone", "textures/gui/ely_icon.png")
     }
 }
