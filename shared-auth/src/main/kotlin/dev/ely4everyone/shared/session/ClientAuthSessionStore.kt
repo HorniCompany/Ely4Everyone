@@ -67,7 +67,7 @@ class ClientAuthSessionStore(
 
     /**
      * Find active session by username (case-insensitive).
-     * Used by FastLogin hook to determine if a player has an active Ely.by session
+     * Used by the LimboAuth endpoint to tell whether a player has an active Ely.by session
      * (i.e., they connected with the Ely4Everyone mod and successfully authorized).
      */
     fun findByUsername(username: String, now: Instant = Instant.now()): ClientAuthSession? {
