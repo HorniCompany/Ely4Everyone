@@ -3,14 +3,18 @@ package dev.ely4everyone.mod.mixin.client
 import com.mojang.authlib.GameProfile
 import com.mojang.authlib.minecraft.MinecraftProfileTextures
 import com.mojang.authlib.properties.Property
-import com.mojang.authlib.yggdrasil.YggdrasilMinecraftSessionService
+// authlib 10 (Minecraft 26.3) dropped the yggdrasil package; the session service kept these methods.
+//? if >=26.3 {
+/*import com.mojang.authlib.services.MinecraftServicesSessionService as SessionServiceImpl
+*///?} else
+import com.mojang.authlib.yggdrasil.YggdrasilMinecraftSessionService as SessionServiceImpl
 import dev.ely4everyone.mod.identity.ActiveElyIdentityManager
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
 import org.spongepowered.asm.mixin.injection.Inject
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
 
-@Mixin(YggdrasilMinecraftSessionService::class)
+@Mixin(SessionServiceImpl::class)
 abstract class YggdrasilMinecraftSessionServiceMixin {
     @Inject(method = ["getPackedTextures"], at = [At("HEAD")], cancellable = true)
     private fun `ely4everyone$provideTexturesForActiveIdentity`(

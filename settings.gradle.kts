@@ -32,7 +32,7 @@ include(":paper-plugin")
 
 stonecutter {
     create(":mod") {
-        versions("1.21.11", "26.1.2")
+        versions("1.21.11", "26.1.2", "26.2", "26.3")
         vcsVersion = "1.21.11"
     }
 }

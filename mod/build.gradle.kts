@@ -77,15 +77,24 @@ tasks.jar {
     )
 }
 
+// The research mixins target authlib internals that authlib 10 (26.3) no longer has.
+val researchMixins: Boolean = (findProperty("researchMixins") as String?)?.toBoolean() ?: true
+val researchMixinsEntry = if (researchMixins) ",\n    \"ely4everyone.research26.mixins.json\"" else ""
+
 tasks.processResources {
     inputs.property("version", project.version)
     inputs.property("minecraftDependency", minecraftDependency)
     inputs.property("javaVersion", javaVersion)
+    inputs.property("researchMixins", researchMixins)
+    if (!researchMixins) {
+        exclude("ely4everyone.research26.mixins.json")
+    }
     filesMatching("fabric.mod.json") {
         expand(
             "version" to project.version,
             "minecraftDependency" to minecraftDependency,
             "javaVersion" to javaVersion,
+            "researchMixinsEntry" to researchMixinsEntry,
         )
     }
 }

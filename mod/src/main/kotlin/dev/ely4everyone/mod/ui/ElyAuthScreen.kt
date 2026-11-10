@@ -248,6 +248,9 @@ class ElyAuthScreen(
 
     override fun onClose() {
         saveConfig()
+        //? if >=26.2 {
+        /*minecraft?.gui?.setScreen(parent)
+        *///?} else
         minecraft?.setScreen(parent)
     }
 

@@ -1,3 +1,5 @@
+// Research only, for authlib up to 9 (Minecraft 26.2). authlib 10 has no such hosts or fields.
+//? if <26.3 {
 package dev.ely4everyone.mod.mixin.client
 
 import com.mojang.authlib.Environment
@@ -21,3 +23,4 @@ abstract class EnvironmentMixin {
         cir.returnValue = roots.servicesHost
     }
 }
+//?}

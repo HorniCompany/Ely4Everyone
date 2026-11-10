@@ -9,7 +9,6 @@ import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.CompletableFuture
 import net.minecraft.client.Minecraft
-import net.minecraft.util.Util
 import org.slf4j.LoggerFactory
 
 enum class AuthFlowStatus {
@@ -139,7 +138,7 @@ object AuthWorkflowManager {
             userCode = code.userCode,
             verificationUri = code.verificationUri,
         )
-        runCatching { Util.getPlatform().openUri(code.verificationUriComplete) }
+        runCatching { BrowserOpener.open(code.verificationUriComplete) }
             .onFailure { logger.warn("Could not open the browser for the Ely.by login", it) }
     }
 

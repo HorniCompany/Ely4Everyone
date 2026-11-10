@@ -19,6 +19,9 @@ object TitleScreenIntegration {
                 x = screen.width / 2 - 124 - ElyIconButton.SIZE - 4,
                 y = screen.height / 4 + 48 + 84,
             ) {
+                //? if >=26.2 {
+                /*client.gui.setScreen(ElyAuthScreen(screen))
+                *///?} else
                 client.setScreen(ElyAuthScreen(screen))
             }
 
