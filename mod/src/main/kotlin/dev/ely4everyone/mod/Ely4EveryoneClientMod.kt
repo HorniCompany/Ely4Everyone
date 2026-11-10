@@ -20,7 +20,6 @@ class Ely4EveryoneClientMod : ClientModInitializer {
         val sessionState = ClientSessionStore.load()
         MinecraftClientSessionBridge.refreshActiveIdentity()
         TitleScreenIntegration.register()
-        dev.ely4everyone.mod.network.LoginQueryResponder.register()
         ClientTickEvents.END_CLIENT_TICK.register(AuthWorkflowManager::tick)
         ClientTickEvents.END_CLIENT_TICK.register(TokenHealthMonitor::tick)
 
