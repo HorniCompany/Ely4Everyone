@@ -137,6 +137,8 @@ Default commands (Gradle runs on Java 25 and downloads the JDKs itself):
 - `./gradlew build` — every mod version, all tests
 - `./gradlew :mod:1.21.11:build` (or `:mod:26.3:build`, ...) — one Minecraft version
 - `./gradlew :mod:1.21.11:runClient` — the game; 1.21.x runs in `mod/run`, newer versions in `mod/run-<version>`
+- `./gradlew :mod:<minecraft>:runClientGameTest` — the in-game test scenario (`mod/src/gametest`); CI runs it for
+  every version and keeps screenshots as artifacts. Keep it green when changing UI, skins or mixins.
 
 Mixin targets are strings the compiler does not check: when a Minecraft or authlib version changes,
 verify every target against the bytecode (`docs/porting.md`).
