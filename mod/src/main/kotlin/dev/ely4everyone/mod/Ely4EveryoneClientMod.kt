@@ -1,7 +1,6 @@
 package dev.ely4everyone.mod
 
 import dev.ely4everyone.mod.auth.AuthWorkflowManager
-import dev.ely4everyone.mod.config.ModConfigStore
 import dev.ely4everyone.mod.identity.MinecraftClientSessionBridge
 import dev.ely4everyone.mod.session.ClientSessionStore
 import dev.ely4everyone.mod.session.TokenHealthMonitor
@@ -17,9 +16,7 @@ class Ely4EveryoneClientMod : ClientModInitializer {
     }
 
     override fun onInitializeClient() {
-        ModConfigStore.saveDefaultsIfMissing()
         ClientSessionStore.removeLegacyInstanceFile()
-        val config = ModConfigStore.load()
         val sessionState = ClientSessionStore.load()
         MinecraftClientSessionBridge.refreshActiveIdentity()
         TitleScreenIntegration.register()
@@ -38,10 +35,7 @@ class Ely4EveryoneClientMod : ClientModInitializer {
         }
 
         logger.info(
-            "Ely4Everyone client initialized. relayBaseUrl={}, discoveryMode={}, preferredLoginMode={}, hasSession={}, {}",
-            config.relayBaseUrl,
-            config.serverDiscoveryMode,
-            config.preferredLoginMode,
+            "Ely4Everyone client initialized. hasSession={}, {}",
             sessionState.isSignedIn(),
             MinecraftClientSessionBridge.currentSessionSummary(),
         )
