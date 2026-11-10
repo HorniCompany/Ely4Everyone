@@ -4,13 +4,6 @@ import com.mojang.blaze3d.platform.NativeImage
 import dev.ely4everyone.mod.auth.AuthFlowState
 import dev.ely4everyone.mod.auth.AuthFlowStatus
 import dev.ely4everyone.mod.auth.AuthWorkflowManager
-import dev.ely4everyone.mod.config.ClientAuthConfig
-import dev.ely4everyone.mod.config.ModConfig
-import dev.ely4everyone.mod.config.ModConfigStore
-import dev.ely4everyone.mod.host.AuthHostCatalog
-import dev.ely4everyone.mod.host.AuthHostEntry
-import dev.ely4everyone.mod.host.AuthHostSource
-import dev.ely4everyone.mod.host.DiscoveredAuthHost
 import dev.ely4everyone.mod.session.ClientSessionState
 import dev.ely4everyone.mod.session.ClientSessionStore
 import dev.ely4everyone.mod.session.TokenHealthMonitor
@@ -24,7 +17,6 @@ import kotlin.math.pow
 import kotlin.math.sin
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.components.Button
-import net.minecraft.client.gui.components.EditBox
 import net.minecraft.client.gui.components.PlayerSkinWidget
 import net.minecraft.client.gui.screens.Screen
 import net.minecraft.client.renderer.texture.DynamicTexture
@@ -39,7 +31,7 @@ import net.minecraft.world.entity.player.PlayerSkin
  * Главный экран мода Ely4Everyone.
  *
  * Четыре визуальных режима:
- * - LOGIN:   выбор auth-host + кнопка «Войти через Ely.by»
+ * - LOGIN:   кнопка «Войти через Ely.by»
  * - POLLING: ожидание завершения OAuth в браузере
  * - SUCCESS: авторизован — скин-превью, ник, UUID, статус
  * - ERROR:   что-то пошло не так — сообщение + «Попробовать снова»
@@ -52,9 +44,6 @@ class ElyAuthScreen(
     private enum class Mode { LOGIN, POLLING, SUCCESS, ERROR }
 
     private var mode: Mode = Mode.LOGIN
-    private var workingConfig: ModConfig = ModConfigStore.load()
-    private var catalog = rebuildCatalog()
-    private var selectedIndex: Int = 0
     private var errorMessage: Component = Component.empty()
     private val openTime = System.currentTimeMillis()
 
@@ -65,9 +54,6 @@ class ElyAuthScreen(
     private lateinit var logoutButton: Button
     private lateinit var doneButton: Button
     private lateinit var closeButton: Button
-    private lateinit var prevHostButton: Button
-    private lateinit var nextHostButton: Button
-    private lateinit var customHostField: EditBox
     private lateinit var skinWidget: PlayerSkinWidget
     private lateinit var refreshSessionButton: Button
 
@@ -94,43 +80,12 @@ class ElyAuthScreen(
         val session = ClientSessionStore.load()
         val authState = AuthWorkflowManager.currentState()
         mode = resolveMode(session, authState)
-        catalog = rebuildCatalog()
 
         val btnY = height / 2 + 20
 
         // ── LOGIN mode widgets ──
-        prevHostButton = addRenderableWidget(
-            Button.builder(Component.literal("◀")) { moveSelection(-1) }
-                .bounds(contentLeft, btnY - 56, 20, buttonHeight)
-                .build(),
-        )
-        nextHostButton = addRenderableWidget(
-            Button.builder(Component.literal("▶")) { moveSelection(1) }
-                .bounds(contentLeft + buttonWidth - 20, btnY - 56, 20, buttonHeight)
-                .build(),
-        )
-        customHostField = EditBox(
-            font,
-            contentLeft,
-            btnY - 30,
-            buttonWidth,
-            buttonHeight,
-            Component.literal("URL auth-host"),
-        ).apply {
-            value = workingConfig.customAuthServerUrl
-            setMaxLength(256)
-            setResponder { value ->
-                workingConfig = workingConfig.copy(customAuthServerUrl = value)
-                if (selectedEntry()?.id == ClientAuthConfig.CUSTOM_HOST_ID) {
-                    catalog = rebuildCatalog()
-                }
-            }
-        }
-        addRenderableWidget(customHostField)
-
         loginButton = addRenderableWidget(
             Button.builder(Lang.tr("button.login")) {
-                saveConfig()
                 AuthWorkflowManager.startBrowserLogin()
                 mode = Mode.POLLING
                 refreshWidgets()
@@ -146,7 +101,6 @@ class ElyAuthScreen(
                     mode = Mode.SUCCESS
                 } else {
                     // If sync failed, start a new browser login
-                    saveConfig()
                     AuthWorkflowManager.startBrowserLogin()
                     mode = Mode.POLLING
                 }
@@ -184,7 +138,6 @@ class ElyAuthScreen(
         )
         doneButton = addRenderableWidget(
             Button.builder(Lang.tr("button.done")) {
-                saveConfig()
                 onClose()
             }.bounds(contentLeft + buttonWidth - smallButtonWidth, btnY + 50, smallButtonWidth, buttonHeight).build(),
         )
@@ -201,7 +154,6 @@ class ElyAuthScreen(
         // Always invisible close/done
         closeButton = addRenderableWidget(
             Button.builder(Lang.tr("button.close")) {
-                saveConfig()
                 onClose()
             }.bounds(contentLeft, btnY + 80, buttonWidth, buttonHeight).build(),
         )
@@ -247,7 +199,6 @@ class ElyAuthScreen(
     }
 
     override fun onClose() {
-        saveConfig()
         //? if >=26.2 {
         /*minecraft?.gui?.setScreen(parent)
         *///?} else
@@ -380,13 +331,12 @@ private fun renderSuccess(context: ElyGraphics, panelTop: Int) {
     val infoY = skinTop + 20
     val username: Any = session.elyUsername ?: Lang.tr("screen.success.unknown")
     val uuid = session.elyUuid ?: "-"
-    val host = if (session.isDirectLogin) "Ely.by" else selectedEntry()?.displayName ?: "horni.cc"
 
     drawTechPanel(context, infoLeft - 10, infoY - 10, panelRight, skinTop + 154, 0x70000000.toInt(), 0x501E654E.toInt())
 
     context.text(font, Lang.tr("screen.success.nick", username), infoLeft, infoY, COLOR_TEXT)
     context.text(font, Component.literal("UUID: ${uuid.take(13)}..."), infoLeft, infoY + 14, COLOR_DIM)
-    context.text(font, Lang.tr("screen.success.login_via", host), infoLeft, infoY + 28, COLOR_DIM)
+    context.text(font, Lang.tr("screen.success.login_via", "Ely.by"), infoLeft, infoY + 28, COLOR_DIM)
 
     val health = TokenHealthMonitor.currentHealth()
     val remaining = TokenHealthMonitor.remainingTimeText()
@@ -422,15 +372,8 @@ private fun renderError(context: ElyGraphics, panelTop: Int) {
         val isSuccess = mode == Mode.SUCCESS
         val isError = mode == Mode.ERROR
 
-        // LOGIN. Logins go straight to Ely.by, so the auth host picker stays hidden.
+        // LOGIN
         loginButton.visible = isLogin
-        prevHostButton.visible = false
-        prevHostButton.active = false
-        nextHostButton.visible = false
-        nextHostButton.active = false
-        customHostField.visible = false
-        customHostField.active = false
-        customHostField.setEditable(false)
 
         // POLLING
         cancelButton.visible = isPolling
@@ -447,54 +390,6 @@ private fun renderError(context: ElyGraphics, panelTop: Int) {
 
         // Close button: hide on SUCCESS (use "Готово" instead)
         closeButton.visible = !isSuccess
-    }
-
-    // ══════════════════════════════════════════
-    //  HOST SELECTION
-    // ══════════════════════════════════════════
-
-    private fun moveSelection(delta: Int) {
-        if (catalog.entries.isEmpty()) return
-        selectedIndex = (selectedIndex + delta).floorMod(catalog.entries.size)
-        syncSelectionIntoConfig()
-        refreshWidgets()
-    }
-
-    private fun selectedEntry(): AuthHostEntry? = catalog.entries.getOrNull(selectedIndex)
-
-    private fun rebuildCatalog(): AuthHostCatalog {
-        val config = ClientAuthConfig(
-            selectedHostId = workingConfig.selectedAuthServerId,
-            customHostUrl = workingConfig.customAuthServerUrl,
-            rememberedHosts = workingConfig.rememberedHosts,
-            discoveryMode = workingConfig.serverDiscoveryMode,
-            preferredLoginMode = workingConfig.preferredLoginMode,
-        )
-        val built = AuthHostCatalog.build(config, emptyList())
-        selectedIndex = built.entries.indexOfFirst { it.id == workingConfig.selectedAuthServerId }
-            .takeIf { it >= 0 } ?: 0
-        return built
-    }
-
-    private fun syncSelectionIntoConfig() {
-        selectedEntry()?.let { selected ->
-            workingConfig = workingConfig.copy(
-                selectedAuthServerId = selected.id,
-                relayBaseUrl = if (selected.id == ClientAuthConfig.CUSTOM_HOST_ID) {
-                    if (this::customHostField.isInitialized) customHostField.value else workingConfig.customAuthServerUrl
-                } else {
-                    selected.baseUrl
-                },
-            )
-        }
-    }
-
-    private fun saveConfig() {
-        if (this::customHostField.isInitialized) {
-            workingConfig = workingConfig.copy(customAuthServerUrl = customHostField.value)
-        }
-        syncSelectionIntoConfig()
-        ModConfigStore.save(workingConfig)
     }
 
     private fun resolveMode(session: ClientSessionState, authState: AuthFlowState): Mode {
@@ -725,5 +620,3 @@ private fun drawHologramPlatform(context: ElyGraphics, centerX: Int, centerY: In
         private val COLOR_BORDER = 0xFF1E654E.toInt()
     }
 }
-
-private fun Int.floorMod(other: Int): Int = ((this % other) + other) % other
