@@ -94,8 +94,9 @@ session service's `getPackedTextures/unpackTextures`.
   screen in English and Russian, Ely.by skins by nick through `SkinManager.get`, odd nicks without a
   crash, a superflat singleplayer world and a dedicated server with mannequins. Screenshots are the
   `game-test-screenshots-<minecraft>` artifacts of each run. Locally: `./gradlew :mod:<minecraft>:runClientGameTest`
-  (opens a game window, mind the shared PC). Lessons from setting it up: worlds time out on 2-core
-  runners unless they are superflat and llvmpipe renders on one thread (`LP_NUM_THREADS=1`, 10 fps), 26.3's SDL3 window needs `SDL_VIDEO_FORCE_EGL=1` under Xvfb, and a game
+  (opens a game window, mind the shared PC). Lessons from setting it up: client and integrated server
+  tick in lockstep, so slow frames stall world loading: superflat worlds and no menu blur (the blurred
+  background of 1.21.11's loading screen alone timed it out on 2-core runners), 26.3's SDL3 window needs `SDL_VIDEO_FORCE_EGL=1` under Xvfb, and a game
   that cannot open its window hangs instead of crashing (the job has a 25 minute limit). The client in
   CI plays offline, so login, our own skin and Ely-authenticated servers are not covered.
 - **Same jar as before** for pure refactors: compare the Minecraft references of every class

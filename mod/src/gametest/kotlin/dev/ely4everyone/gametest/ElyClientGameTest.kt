@@ -25,11 +25,14 @@ import net.minecraft.world.level.levelgen.presets.WorldPresets
 @Suppress("UnstableApiUsage")
 class ElyClientGameTest : FabricClientGameTest {
     override fun runTest(context: ClientGameTestContext) {
-        // CI runners have 2 cores and software OpenGL: keep rendering cheap so world generation keeps up.
+        // CI runners have 2 cores and software OpenGL. The client and the integrated server tick in
+        // lockstep in game tests, so a slow frame stalls the server too: the blurred menu background
+        // behind 1.21.11's world loading screen alone made the world load time out.
         context.runOnClient<RuntimeException> { mc ->
+            mc.options.menuBackgroundBlurriness().set(0)
             mc.options.renderDistance().set(2)
             mc.options.simulationDistance().set(5)
-            mc.options.framerateLimit().set(10)
+            mc.options.framerateLimit().set(30)
         }
         titleScreenHasElyButton(context)
         elyScreenOpens(context, "ely-screen-en")
