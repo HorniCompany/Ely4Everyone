@@ -75,7 +75,12 @@ class ElyClientGameTest : FabricClientGameTest {
     private fun singleplayer(context: ClientGameTestContext) {
         context.worldBuilder().adjustSettings { state ->
             // Superflat generates instantly; the default world timed out on CI (1.21.11).
-            state.normalPresetList.firstOrNull { it.preset()?.`is`(WorldPresets.FLAT) == true }?.let(state::setWorldType)
+            val presets = state.normalPresetList + state.altPresetList
+            println("[ely4everyone-gametest] world presets: " + presets.map { it.preset()?.unwrapKey()?.orElse(null) })
+            val flat = presets.firstOrNull { it.preset()?.`is`(WorldPresets.FLAT) == true }
+                ?: error("no superflat preset among $presets")
+            state.setWorldType(flat)
+            println("[ely4everyone-gametest] world type: " + state.worldType.preset()?.unwrapKey()?.orElse(null))
         }.create().use { world ->
             context.waitTicks(100)
             summonMannequins { world.server.runCommand(it) }
