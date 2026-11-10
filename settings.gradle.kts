@@ -7,6 +7,11 @@ pluginManagement {
     }
 }
 
+plugins {
+    // Downloads the JDKs the build asks for (Java 25 for Loom 1.15+ and Minecraft 26.x) into the Gradle cache.
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+}
+
 dependencyResolutionManagement {
     repositories {
         mavenCentral()

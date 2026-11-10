@@ -1,5 +1,5 @@
 plugins {
-    id("fabric-loom")
+    id("net.fabricmc.fabric-loom-remap")
     kotlin("jvm")
 }
 
@@ -48,15 +48,18 @@ dependencies {
 
 tasks.jar {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    // Resolved lazily: Loom 1.15+ forbids touching runtimeClasspath while projects are configured.
     from(
-        configurations.runtimeClasspath.get()
-            .filter { file ->
-                file.name.endsWith(".jar") && (
-                    file.name.startsWith("kotlin-stdlib") ||
-                        file.name.startsWith("annotations-")
-                    )
-            }
-            .map { zipTree(it) },
+        provider {
+            configurations.runtimeClasspath.get()
+                .filter { file ->
+                    file.name.endsWith(".jar") && (
+                        file.name.startsWith("kotlin-stdlib") ||
+                            file.name.startsWith("annotations-")
+                        )
+                }
+                .map { zipTree(it) }
+        },
     )
 }
 
@@ -137,6 +140,4 @@ tasks.test {
     System.getProperty("ely4everyone.liveLogin")?.let { systemProperty("ely4everyone.liveLogin", it) }
 }
 
-kotlin {
-    jvmToolchain(21)
-}
+// Kotlin compiles with the java toolchain above (Java 21 for 1.21.x).
