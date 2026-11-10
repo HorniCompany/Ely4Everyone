@@ -49,6 +49,8 @@ jobs:
   game-tests:
     name: Game tests (${{ matrix.minecraft }})
     runs-on: ubuntu-24.04
+    # A game that cannot open its window waits forever instead of crashing.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -72,7 +74,15 @@ jobs:
       - name: Install a virtual display
         run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb libgl1-mesa-dri mesa-utils
 
+      - name: Check the virtual display
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" glxinfo -B | head -20
+
       - name: Run the game tests
+        env:
+          # Mesa software rendering. 26.3 opens its window with SDL3, which found no usable GLX
+          # visual under Xvfb; EGL works there.
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          SDL_VIDEO_FORCE_EGL: "1"
         run: |
           chmod +x gradlew
           xvfb-run -a -s "-screen 0 1920x1080x24" ./gradlew --no-daemon :mod:${{ matrix.minecraft }}:runClientGameTest

@@ -4,6 +4,7 @@ import com.mojang.authlib.GameProfile
 import dev.ely4everyone.mod.ui.ElyAuthScreen
 import dev.ely4everyone.mod.ui.ElyIconButton
 import java.util.Optional
+import java.util.Properties
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest
@@ -13,6 +14,7 @@ import net.minecraft.client.gui.screens.Screen
 import net.minecraft.client.gui.screens.TitleScreen
 import net.minecraft.locale.Language
 import net.minecraft.world.entity.player.PlayerSkin
+import net.minecraft.world.level.levelgen.presets.WorldPresets
 
 /**
  * The real game, on every Minecraft version the mod is built for (CI: xvfb on Linux).
@@ -23,6 +25,12 @@ import net.minecraft.world.entity.player.PlayerSkin
 @Suppress("UnstableApiUsage")
 class ElyClientGameTest : FabricClientGameTest {
     override fun runTest(context: ClientGameTestContext) {
+        // CI runners have 2 cores and software OpenGL: keep rendering cheap so world generation keeps up.
+        context.runOnClient<RuntimeException> { mc ->
+            mc.options.renderDistance().set(2)
+            mc.options.simulationDistance().set(5)
+            mc.options.framerateLimit().set(30)
+        }
         titleScreenHasElyButton(context)
         elyScreenOpens(context, "ely-screen-en")
         skinsByNick(context)
@@ -65,7 +73,10 @@ class ElyClientGameTest : FabricClientGameTest {
     }
 
     private fun singleplayer(context: ClientGameTestContext) {
-        context.worldBuilder().create().use { world ->
+        context.worldBuilder().adjustSettings { state ->
+            // Superflat generates instantly; the default world timed out on CI (1.21.11).
+            state.normalPresetList.firstOrNull { it.preset()?.`is`(WorldPresets.FLAT) == true }?.let(state::setWorldType)
+        }.create().use { world ->
             context.waitTicks(100)
             summonMannequins { world.server.runCommand(it) }
             context.waitTicks(100)
@@ -74,7 +85,13 @@ class ElyClientGameTest : FabricClientGameTest {
     }
 
     private fun dedicatedServer(context: ClientGameTestContext) {
-        context.worldBuilder().createServer().use { server ->
+        val properties = Properties().apply {
+            setProperty("level-type", "minecraft:flat")
+            setProperty("generate-structures", "false")
+            setProperty("view-distance", "3")
+            setProperty("simulation-distance", "5")
+        }
+        context.worldBuilder().createServer(properties).use { server ->
             server.connect().use {
                 context.waitTicks(100)
                 summonMannequins { server.runCommand(it) }
