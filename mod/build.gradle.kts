@@ -100,7 +100,20 @@ tasks.processResources {
 // Game folder for runClient, relative to the node: mod/run by default. Newer versions get their own
 // (runDir in the node properties) so opening a world there never upgrades the 1.21.x worlds.
 val gameRunDir: String = (findProperty("runDir") as String?) ?: "../../run"
-loom.runConfigs.all { runDir = gameRunDir }
+loom.runConfigs.matching { it.name == "client" || it.name == "server" }.configureEach { runDir = gameRunDir }
+
+// Client game tests (mod/src/gametest): the real game runs the scenario in ElyClientGameTest.
+// `./gradlew :mod:<minecraft>:runClientGameTest`; in CI under xvfb. Screenshots go to
+// mod/versions/<minecraft>/build/run/clientGameTest/screenshots.
+extensions.configure<net.fabricmc.loom.api.fabricapi.FabricApiExtension>("fabricApi") {
+    configureTests {
+        createSourceSet.set(true)
+        modId.set("ely4everyone-gametest")
+        enableGameTests.set(false)
+        enableClientGameTests.set(true)
+        eula.set(true)
+    }
+}
 
 val syncToLocalMods by tasks.registering(Copy::class) {
     group = "deployment"

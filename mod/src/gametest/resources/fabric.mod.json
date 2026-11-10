@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "ely4everyone-gametest",
+  "version": "1.0.0",
+  "name": "Ely4Everyone game tests",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-client-gametest": [
+      "dev.ely4everyone.gametest.ElyClientGameTest"
+    ]
+  },
+  "depends": {
+    "ely4everyone": "*"
+  }
+}
