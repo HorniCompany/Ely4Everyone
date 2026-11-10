@@ -10,7 +10,7 @@ ely4everyone-mod-<version>+<minecraft>.jar.
 Steps, each skipped when already done:
 1. Checks that the working tree is clean and HEAD is pushed to origin/main.
 2. GitHub: if release v<version> is missing, builds every node (tests run too) and creates one
-   release with all mod jars and the Velocity plugin jar.
+   release with all mod jars. (The Velocity/Paper plugins live in their own repository since 0.3.)
 3. Modrinth: one version per Minecraft version, number <version>+<minecraft>, game versions from
    modrinthGameVersions in the node properties (default: the node's own version). Each jar is
    **downloaded from the GitHub release**, so both places ship byte-identical files.
@@ -203,10 +203,8 @@ def main() -> None:
     else:
         print("building (tests included)...")
         gradlew = "gradlew.bat" if os.name == "nt" else "./gradlew"
-        run(str(ROOT / gradlew), *[f":mod:{node}:build" for node in nodes], ":velocity-plugin:build", "-q",
-            capture=False)
+        run(str(ROOT / gradlew), *[f":mod:{node}:build" for node in nodes], "-q", capture=False)
         jars = [ROOT / "mod" / "versions" / node / "build" / "libs" / jar for node, jar in mod_jars.items()]
-        jars.append(ROOT / "velocity-plugin/build/libs" / f"ely4everyone-velocity-plugin-{version}.jar")
         missing = [str(jar) for jar in jars if not jar.exists()]
         if missing:
             sys.exit(f"build did not produce: {missing}")

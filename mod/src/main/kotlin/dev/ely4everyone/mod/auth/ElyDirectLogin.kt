@@ -1,8 +1,8 @@
 package dev.ely4everyone.mod.auth
 
-import dev.ely4everyone.shared.auth.AuthProfileProperty
-import dev.ely4everyone.shared.host.JsonFieldReader
-import dev.ely4everyone.shared.host.UpstreamHttp
+import dev.ely4everyone.mod.net.ProfileProperty
+import dev.ely4everyone.mod.net.JsonFieldReader
+import dev.ely4everyone.mod.net.UpstreamHttp
 import java.net.URI
 import org.slf4j.LoggerFactory
 import java.net.URLEncoder
@@ -142,7 +142,7 @@ object ElyDirectLogin {
     }
 
     /** Signed skin textures of an Ely account, or null if it has none. Needs no login. */
-    fun fetchTextures(uuid: String): AuthProfileProperty? {
+    fun fetchTextures(uuid: String): ProfileProperty? {
         val response = httpClient.send(
             // Without unsigned=false Ely, like Mojang, leaves the signature out.
             UpstreamHttp.request(URI.create(SESSION_PROFILE_URL + uuid.replace("-", "") + "?unsigned=false"))
@@ -157,7 +157,7 @@ object ElyDirectLogin {
         return texturesFrom(response.body())
     }
 
-    fun texturesFrom(profileJson: String): AuthProfileProperty? =
+    fun texturesFrom(profileJson: String): ProfileProperty? =
         JsonFieldReader.readProperties(profileJson).firstOrNull { it.name == "textures" }
 
     fun parseDeviceCode(body: String): ElyDeviceCode {

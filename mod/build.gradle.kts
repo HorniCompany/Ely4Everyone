@@ -47,24 +47,6 @@ java {
     withSourcesJar()
 }
 
-sourceSets {
-    named("main") {
-        // From shared-auth the mod needs only the Ely JSON and HTTP helpers and LoopbackLogin.
-        // The auth host server, its session/ticket stores and the relay protocol are for the
-        // Velocity and Paper plugins and stay out of the mod jar.
-        java.srcDir(rootProject.file("shared-auth/src/main/kotlin"))
-        java.exclude(
-            "dev/ely4everyone/shared/host/EmbeddedAuthHttpServer.kt",
-            "dev/ely4everyone/shared/host/CachingHybridAuthUpstream.kt",
-            "dev/ely4everyone/shared/host/IssuedLoginTicketStore.kt",
-            "dev/ely4everyone/shared/oauth/OAuthStateStore.kt",
-            "dev/ely4everyone/shared/protocol/**",
-            "dev/ely4everyone/shared/session/**",
-            "dev/ely4everyone/shared/ticket/**",
-        )
-    }
-}
-
 dependencies {
     "minecraft"("com.mojang:minecraft:$minecraftVersion")
     if (minecraftObfuscated) {

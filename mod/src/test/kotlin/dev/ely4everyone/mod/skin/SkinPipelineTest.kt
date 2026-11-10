@@ -4,7 +4,7 @@ import com.mojang.authlib.SignatureState
 import dev.ely4everyone.mod.auth.ElyDirectLogin
 import dev.ely4everyone.mod.identity.ElyIdentityManager
 import dev.ely4everyone.mod.session.ClientSessionState
-import dev.ely4everyone.shared.host.JsonFieldReader
+import dev.ely4everyone.mod.net.JsonFieldReader
 import java.time.Instant
 import java.util.Base64
 import java.util.UUID

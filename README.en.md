@@ -61,7 +61,7 @@ The "Log out" button on the same screen switches the game back to your usual acc
 
 ## 🖥️ For server owners
 
-To let players with Ely.by accounts in, the server has to verify them through Ely.by, for example with [authlib-injector](https://docs.ely.by/en/authlib-injector.html) pointed at Ely.by. For Velocity networks with both Microsoft and Ely.by players there is the `ely4everyone-velocity-plugin` in the [releases](https://github.com/HorniCompany/Ely4Everyone/releases). A detailed guide is on the way.
+The mod is client-side only, servers don't need it. To let players with Ely.by accounts in, the server has to verify them through Ely.by, for example with [authlib-injector](https://docs.ely.by/en/authlib-injector.html) pointed at Ely.by.
 
 ## 🧑‍💻 Building
 

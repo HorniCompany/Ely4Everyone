@@ -1,6 +1,0 @@
-name: Ely4EveryonePaperBridge
-main: dev.ely4everyone.paper.Ely4EveryonePaperBridgePlugin
-version: ${version}
-api-version: '1.21'
-author: cokeef
-description: Standalone Paper auth-host and bridge for Ely4Everyone trusted logins.

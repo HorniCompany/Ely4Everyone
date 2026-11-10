@@ -2,7 +2,6 @@ package dev.ely4everyone.mod.auth
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
-import dev.ely4everyone.shared.oauth.LoopbackLogin
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.URI

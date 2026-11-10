@@ -1,4 +1,4 @@
-package dev.ely4everyone.shared.oauth
+package dev.ely4everyone.mod.auth
 
 import java.net.URI
 import java.net.URLEncoder

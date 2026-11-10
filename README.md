@@ -61,7 +61,7 @@
 
 ## 🖥️ Для владельцев серверов
 
-Чтобы пускать игроков с Ely-аккаунтами, сервер должен проверять их через Ely.by, например через [authlib-injector](https://docs.ely.by/en/authlib-injector.html) с Ely.by. Для Velocity, где играют и лицензионщики, и Ely-игроки, в [релизах](https://github.com/HorniCompany/Ely4Everyone/releases) есть плагин `ely4everyone-velocity-plugin`. Подробный гайд пока пишется.
+Мод клиентский, на сервер его ставить не нужно. Чтобы пускать игроков с Ely-аккаунтами, сервер должен проверять их через Ely.by, например через [authlib-injector](https://docs.ely.by/en/authlib-injector.html) с Ely.by.
 
 ## 🧑‍💻 Сборка
 
