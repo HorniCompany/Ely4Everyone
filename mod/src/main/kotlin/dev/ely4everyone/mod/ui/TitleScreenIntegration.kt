@@ -3,7 +3,7 @@ package dev.ely4everyone.mod.ui
 import dev.ely4everyone.mod.session.TokenHealthMonitor
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents
 import net.fabricmc.fabric.api.client.screen.v1.Screens
-import net.minecraft.client.gui.screen.TitleScreen
+import net.minecraft.client.gui.screens.TitleScreen
 
 object TitleScreenIntegration {
     fun register() {

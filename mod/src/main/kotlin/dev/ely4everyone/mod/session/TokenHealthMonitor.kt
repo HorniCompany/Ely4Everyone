@@ -3,10 +3,10 @@ package dev.ely4everyone.mod.session
 import dev.ely4everyone.mod.auth.AuthWorkflowManager
 import dev.ely4everyone.mod.identity.ActiveElyIdentityManager
 import dev.ely4everyone.mod.skin.ElySkinResolver
-import net.minecraft.client.MinecraftClient
-import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
+import net.minecraft.client.Minecraft
+import org.slf4j.LoggerFactory
 
 /**
  * Monitors the health of the current Ely.by session token.
@@ -125,7 +125,7 @@ object TokenHealthMonitor {
         }
     }
 
-    fun tick(client: MinecraftClient) {
+    fun tick(client: Minecraft) {
         tickCounter++
         if (tickCounter < CHECK_INTERVAL_TICKS) return
         tickCounter = 0

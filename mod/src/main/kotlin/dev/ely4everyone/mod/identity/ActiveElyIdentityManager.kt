@@ -5,14 +5,14 @@ import com.mojang.authlib.minecraft.MinecraftProfileTextures
 import com.mojang.authlib.properties.Property
 import dev.ely4everyone.mod.session.ClientSessionState
 import dev.ely4everyone.mod.session.ClientSessionStore
-import net.minecraft.client.session.Session
+import net.minecraft.client.User
 
 sealed interface ActiveElyIdentityState {
     data object Vanilla : ActiveElyIdentityState
 
     data class Active(
-        val vanillaSession: Session?,
-        val elySession: Session,
+        val vanillaSession: User?,
+        val elySession: User,
         val gameProfile: GameProfile,
         val identity: ElyIdentity,
         val texturesProperty: Property?,
@@ -30,7 +30,7 @@ object ActiveElyIdentityManager {
 
     fun activeStateOrNull(): ActiveElyIdentityState.Active? = state as? ActiveElyIdentityState.Active
 
-    fun currentSessionOrNull(): Session? = activeStateOrNull()?.elySession
+    fun currentSessionOrNull(): User? = activeStateOrNull()?.elySession
 
     fun currentGameProfileOrNull(): GameProfile? = activeStateOrNull()?.gameProfile
 
@@ -38,7 +38,7 @@ object ActiveElyIdentityManager {
 
     fun currentProfileTexturesOrNull(): MinecraftProfileTextures? = activeStateOrNull()?.profileTextures
 
-    fun refreshFromStore(currentSession: Session?): Boolean {
+    fun refreshFromStore(currentSession: User?): Boolean {
         if (currentSession == null) {
             deactivate()
             return false
@@ -48,7 +48,7 @@ object ActiveElyIdentityManager {
         return activate(sessionState, currentSession)
     }
 
-    fun activate(sessionState: ClientSessionState, currentSession: Session): Boolean {
+    fun activate(sessionState: ClientSessionState, currentSession: User): Boolean {
         val identity = ElyIdentityManager.fromClientSession(sessionState) ?: run {
             deactivate()
             return false
@@ -56,9 +56,9 @@ object ActiveElyIdentityManager {
         return activate(identity, currentSession)
     }
 
-    fun activate(identity: ElyIdentity, currentSession: Session): Boolean {
+    fun activate(identity: ElyIdentity, currentSession: User): Boolean {
         val sessionUuid = runCatching { java.util.UUID.fromString(identity.uuid) }.getOrNull() ?: return false
-        val elySession = Session(
+        val elySession = User(
             identity.username,
             sessionUuid,
             identity.accessToken,
@@ -78,7 +78,7 @@ object ActiveElyIdentityManager {
         return true
     }
 
-    fun deactivate(): Session? {
+    fun deactivate(): User? {
         val previous = activeStateOrNull()
         state = ActiveElyIdentityState.Vanilla
         return previous?.vanillaSession

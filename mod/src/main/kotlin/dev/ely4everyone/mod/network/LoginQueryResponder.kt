@@ -7,16 +7,16 @@ import dev.ely4everyone.mod.session.ClientSessionState
 import dev.ely4everyone.mod.session.ClientSessionStore
 import dev.ely4everyone.shared.protocol.AuthProtocolCodec
 import dev.ely4everyone.shared.protocol.LoginResponse
-import net.fabricmc.fabric.api.client.networking.v1.ClientLoginNetworking
-import net.fabricmc.fabric.api.networking.v1.PacketByteBufs
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.network.ClientLoginNetworkHandler
-import net.minecraft.network.PacketByteBuf
 import io.netty.channel.ChannelFutureListener
-import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.concurrent.CompletableFuture
 import java.util.function.Consumer
+import net.fabricmc.fabric.api.client.networking.v1.ClientLoginNetworking
+import net.fabricmc.fabric.api.networking.v1.PacketByteBufs
+import net.minecraft.client.Minecraft
+import net.minecraft.client.multiplayer.ClientHandshakePacketListenerImpl
+import net.minecraft.network.FriendlyByteBuf
+import org.slf4j.LoggerFactory
 
 object LoginQueryResponder {
     private val logger = LoggerFactory.getLogger("${Ely4EveryoneClientMod.MOD_ID}/login")
@@ -26,11 +26,11 @@ object LoginQueryResponder {
     }
 
     private fun handleLoginQuery(
-        client: MinecraftClient,
-        handler: ClientLoginNetworkHandler,
-        buf: PacketByteBuf,
+        client: Minecraft,
+        handler: ClientHandshakePacketListenerImpl,
+        buf: FriendlyByteBuf,
         callbacksConsumer: Consumer<ChannelFutureListener>,
-    ): CompletableFuture<PacketByteBuf?> {
+    ): CompletableFuture<FriendlyByteBuf?> {
         val payload = ByteArray(buf.readableBytes())
         buf.readBytes(payload)
         val challenge = AuthProtocolCodec.decodeChallenge(payload)
@@ -84,7 +84,7 @@ object LoginQueryResponder {
         }
     }
 
-    private fun emptyResponse(): PacketByteBuf? {
+    private fun emptyResponse(): FriendlyByteBuf? {
         // According to Fabric API, returning null signals that the client doesn't understand the channel.
         // We reply with an empty packet to explicitly say we understood but failed to provide a ticket.
         val responsePayload = AuthProtocolCodec.encodeResponse(LoginResponse(ticket = null))

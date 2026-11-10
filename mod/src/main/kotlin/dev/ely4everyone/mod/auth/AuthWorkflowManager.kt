@@ -4,12 +4,12 @@ import dev.ely4everyone.mod.Ely4EveryoneClientMod
 import dev.ely4everyone.mod.identity.MinecraftClientSessionBridge
 import dev.ely4everyone.mod.session.ClientSessionState
 import dev.ely4everyone.mod.session.ClientSessionStore
-import net.minecraft.client.MinecraftClient
-import net.minecraft.util.Util
-import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.CompletableFuture
+import net.minecraft.client.Minecraft
+import net.minecraft.util.Util
+import org.slf4j.LoggerFactory
 
 enum class AuthFlowStatus {
     IDLE,
@@ -105,7 +105,7 @@ object AuthWorkflowManager {
         CompletableFuture
             .supplyAsync { ElyDirectLogin.requestDeviceCode() }
             .whenComplete { code, error ->
-                MinecraftClient.getInstance().execute {
+                Minecraft.getInstance().execute {
                     if (startToken !== token) {
                         return@execute
                     }
@@ -138,7 +138,7 @@ object AuthWorkflowManager {
             userCode = code.userCode,
             verificationUri = code.verificationUri,
         )
-        runCatching { Util.getOperatingSystem().open(code.verificationUriComplete) }
+        runCatching { Util.getPlatform().openUri(code.verificationUriComplete) }
             .onFailure { logger.warn("Could not open the browser for the Ely.by login", it) }
     }
 
@@ -252,7 +252,7 @@ object AuthWorkflowManager {
         }
     }
 
-    fun tick(client: MinecraftClient) {
+    fun tick(client: Minecraft) {
         val current = attempt ?: return
         if (current.pollInFlight) {
             return

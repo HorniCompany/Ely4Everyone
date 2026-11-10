@@ -1,40 +1,40 @@
 package dev.ely4everyone.mod.ui
 
+import com.mojang.blaze3d.platform.NativeImage
 import dev.ely4everyone.mod.auth.AuthFlowState
 import dev.ely4everyone.mod.auth.AuthFlowStatus
 import dev.ely4everyone.mod.auth.AuthWorkflowManager
 import dev.ely4everyone.mod.config.ClientAuthConfig
 import dev.ely4everyone.mod.config.ModConfig
 import dev.ely4everyone.mod.config.ModConfigStore
-import dev.ely4everyone.mod.session.TokenHealthMonitor
-import dev.ely4everyone.mod.session.TokenHealthMonitor.TokenHealth
 import dev.ely4everyone.mod.host.AuthHostCatalog
 import dev.ely4everyone.mod.host.AuthHostEntry
 import dev.ely4everyone.mod.host.AuthHostSource
 import dev.ely4everyone.mod.host.DiscoveredAuthHost
 import dev.ely4everyone.mod.session.ClientSessionState
 import dev.ely4everyone.mod.session.ClientSessionStore
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.gui.DrawContext
-import net.minecraft.client.gui.screen.Screen
-import net.minecraft.client.gui.widget.ButtonWidget
-import net.minecraft.client.gui.widget.PlayerSkinWidget
-import net.minecraft.client.gui.widget.TextFieldWidget
-import net.minecraft.client.texture.NativeImage
-import net.minecraft.client.texture.NativeImageBackedTexture
-import net.minecraft.client.util.DefaultSkinHelper
-import net.minecraft.entity.player.PlayerSkinType
-import net.minecraft.entity.player.SkinTextures
-import net.minecraft.text.Text
-import net.minecraft.util.AssetInfo
-import net.minecraft.util.Identifier
+import dev.ely4everyone.mod.session.TokenHealthMonitor
+import dev.ely4everyone.mod.session.TokenHealthMonitor.TokenHealth
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
-import kotlin.math.sin
 import kotlin.math.pow
+import kotlin.math.sin
+import net.minecraft.client.Minecraft
+import net.minecraft.client.gui.GuiGraphics
+import net.minecraft.client.gui.components.Button
+import net.minecraft.client.gui.components.EditBox
+import net.minecraft.client.gui.components.PlayerSkinWidget
+import net.minecraft.client.gui.screens.Screen
+import net.minecraft.client.renderer.texture.DynamicTexture
+import net.minecraft.client.resources.DefaultPlayerSkin
+import net.minecraft.core.ClientAsset
+import net.minecraft.network.chat.Component
+import net.minecraft.resources.Identifier
+import net.minecraft.world.entity.player.PlayerModelType
+import net.minecraft.world.entity.player.PlayerSkin
 
 /**
  * Главный экран мода Ely4Everyone.
@@ -47,7 +47,7 @@ import kotlin.math.pow
  */
 class ElyAuthScreen(
     private val parent: Screen,
-) : Screen(Text.literal("Ely4Everyone")) {
+) : Screen(Component.literal("Ely4Everyone")) {
 
     // ── State ──
     private enum class Mode { LOGIN, POLLING, SUCCESS, ERROR }
@@ -60,22 +60,22 @@ class ElyAuthScreen(
     private val openTime = System.currentTimeMillis()
 
     // ── Widgets (initialized in init()) ──
-    private lateinit var loginButton: ButtonWidget
-    private lateinit var cancelButton: ButtonWidget
-    private lateinit var retryButton: ButtonWidget
-    private lateinit var logoutButton: ButtonWidget
-    private lateinit var doneButton: ButtonWidget
-    private lateinit var closeButton: ButtonWidget
-    private lateinit var prevHostButton: ButtonWidget
-    private lateinit var nextHostButton: ButtonWidget
-    private lateinit var customHostField: TextFieldWidget
+    private lateinit var loginButton: Button
+    private lateinit var cancelButton: Button
+    private lateinit var retryButton: Button
+    private lateinit var logoutButton: Button
+    private lateinit var doneButton: Button
+    private lateinit var closeButton: Button
+    private lateinit var prevHostButton: Button
+    private lateinit var nextHostButton: Button
+    private lateinit var customHostField: EditBox
     private lateinit var skinWidget: PlayerSkinWidget
-    private lateinit var refreshSessionButton: ButtonWidget
+    private lateinit var refreshSessionButton: Button
 
     // ── Skin preview ──
     private var previewSourceKey: String? = null
     private var previewFuture: CompletableFuture<NativeImage?>? = null
-    private var previewTexture: NativeImageBackedTexture? = null
+    private var previewTexture: DynamicTexture? = null
     private var previewTextureId: Identifier? = null
 
     // ── Layout constants ──
@@ -100,47 +100,47 @@ class ElyAuthScreen(
         val btnY = height / 2 + 20
 
         // ── LOGIN mode widgets ──
-        prevHostButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("◀")) { moveSelection(-1) }
-                .dimensions(contentLeft, btnY - 56, 20, buttonHeight)
+        prevHostButton = addRenderableWidget(
+            Button.builder(Component.literal("◀")) { moveSelection(-1) }
+                .bounds(contentLeft, btnY - 56, 20, buttonHeight)
                 .build(),
         )
-        nextHostButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("▶")) { moveSelection(1) }
-                .dimensions(contentLeft + buttonWidth - 20, btnY - 56, 20, buttonHeight)
+        nextHostButton = addRenderableWidget(
+            Button.builder(Component.literal("▶")) { moveSelection(1) }
+                .bounds(contentLeft + buttonWidth - 20, btnY - 56, 20, buttonHeight)
                 .build(),
         )
-        customHostField = TextFieldWidget(
-            textRenderer,
+        customHostField = EditBox(
+            font,
             contentLeft,
             btnY - 30,
             buttonWidth,
             buttonHeight,
-            Text.literal("URL auth-host"),
+            Component.literal("URL auth-host"),
         ).apply {
-            text = workingConfig.customAuthServerUrl
+            value = workingConfig.customAuthServerUrl
             setMaxLength(256)
-            setChangedListener { value ->
+            setResponder { value ->
                 workingConfig = workingConfig.copy(customAuthServerUrl = value)
                 if (selectedEntry()?.id == ClientAuthConfig.CUSTOM_HOST_ID) {
                     catalog = rebuildCatalog()
                 }
             }
         }
-        addDrawableChild(customHostField)
+        addRenderableWidget(customHostField)
 
-        loginButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Войти через Ely.by")) {
+        loginButton = addRenderableWidget(
+            Button.builder(Component.literal("Войти через Ely.by")) {
                 saveConfig()
                 AuthWorkflowManager.startBrowserLogin()
                 mode = Mode.POLLING
                 refreshWidgets()
-            }.dimensions(contentLeft, btnY, buttonWidth, 24).build(),
+            }.bounds(contentLeft, btnY, buttonWidth, 24).build(),
         )
 
         // ── SUCCESS mode: refresh session button ──
-        refreshSessionButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Обновить сессию")) {
+        refreshSessionButton = addRenderableWidget(
+            Button.builder(Component.literal("Обновить сессию")) {
                 val success = AuthWorkflowManager.refreshSession()
                 if (success) {
                     TokenHealthMonitor.forceReevaluate()
@@ -152,59 +152,59 @@ class ElyAuthScreen(
                     mode = Mode.POLLING
                 }
                 refreshWidgets()
-            }.dimensions(contentLeft, btnY + 26, buttonWidth, buttonHeight).build(),
+            }.bounds(contentLeft, btnY + 26, buttonWidth, buttonHeight).build(),
         )
 
         // ── POLLING mode widgets ──
-        cancelButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Отмена")) {
+        cancelButton = addRenderableWidget(
+            Button.builder(Component.literal("Отмена")) {
                 AuthWorkflowManager.cancelCurrentAttempt()
                 mode = Mode.LOGIN
                 refreshWidgets()
-            }.dimensions(contentLeft, btnY + 30, buttonWidth, buttonHeight).build(),
+            }.bounds(contentLeft, btnY + 30, buttonWidth, buttonHeight).build(),
         )
 
         // ── ERROR mode widgets ──
-        retryButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Попробовать снова")) {
+        retryButton = addRenderableWidget(
+            Button.builder(Component.literal("Попробовать снова")) {
                 AuthWorkflowManager.resetUiState()
                 mode = Mode.LOGIN
                 refreshWidgets()
-            }.dimensions(contentLeft, btnY + 20, buttonWidth, buttonHeight).build(),
+            }.bounds(contentLeft, btnY + 20, buttonWidth, buttonHeight).build(),
         )
 
         // ── SUCCESS mode widgets ──
-        logoutButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Выйти")) {
+        logoutButton = addRenderableWidget(
+            Button.builder(Component.literal("Выйти")) {
                 AuthWorkflowManager.clearSession()
                 clearPreviewTexture()
                 TokenHealthMonitor.forceReevaluate()
                 mode = Mode.LOGIN
                 refreshWidgets()
-            }.dimensions(contentLeft, btnY + 50, smallButtonWidth, buttonHeight).build(),
+            }.bounds(contentLeft, btnY + 50, smallButtonWidth, buttonHeight).build(),
         )
-        doneButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Готово")) {
+        doneButton = addRenderableWidget(
+            Button.builder(Component.literal("Готово")) {
                 saveConfig()
-                close()
-            }.dimensions(contentLeft + buttonWidth - smallButtonWidth, btnY + 50, smallButtonWidth, buttonHeight).build(),
+                onClose()
+            }.bounds(contentLeft + buttonWidth - smallButtonWidth, btnY + 50, smallButtonWidth, buttonHeight).build(),
         )
 
-        skinWidget = addDrawableChild(
+        skinWidget = addRenderableWidget(
             PlayerSkinWidget(
                 120,
                 150,
-                client!!.loadedEntityModels,
+                minecraft!!.entityModels,
                 ::currentSkinTextures,
             ),
         )
 
         // Always invisible close/done
-        closeButton = addDrawableChild(
-            ButtonWidget.builder(Text.literal("Закрыть")) {
+        closeButton = addRenderableWidget(
+            Button.builder(Component.literal("Закрыть")) {
                 saveConfig()
-                close()
-            }.dimensions(contentLeft, btnY + 80, buttonWidth, buttonHeight).build(),
+                onClose()
+            }.bounds(contentLeft, btnY + 80, buttonWidth, buttonHeight).build(),
         )
 
         // Pre-fetch skin if session already exists
@@ -247,9 +247,9 @@ class ElyAuthScreen(
         pollPreviewTexture()
     }
 
-    override fun close() {
+    override fun onClose() {
         saveConfig()
-        client?.setScreen(parent)
+        minecraft?.setScreen(parent)
     }
 
     override fun removed() {
@@ -260,7 +260,7 @@ class ElyAuthScreen(
 //  RENDER
 // ══════════════════════════════════════════
 
-override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
+override fun render(context: GuiGraphics, mouseX: Int, mouseY: Int, delta: Float) {
     val timeNow = System.currentTimeMillis()
     val timeSinceOpen = timeNow - openTime
     val animProgress = (timeSinceOpen / 700f).coerceIn(0f, 1f)
@@ -291,7 +291,7 @@ override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float
     drawTechPanel(context, panelLeft - 10, panelTop - 10, panelRight + 10, panelBottom + 10, panelFill, panelBorder)
 
     // Title
-    context.drawCenteredTextWithShadow(textRenderer, title, centerX, panelTop, COLOR_TITLE)
+    context.drawCenteredString(font, title, centerX, panelTop, COLOR_TITLE)
 
     when (mode) {
         Mode.LOGIN -> renderLogin(context, panelTop)
@@ -303,37 +303,37 @@ override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float
     super.render(context, mouseX, mouseY, delta)
 }
 
-private fun renderLogin(context: DrawContext, panelTop: Int) {
-    context.drawCenteredTextWithShadow(textRenderer, Text.literal("Играй на серверах с Ely.by"), centerX, panelTop + 14, COLOR_SUBTITLE)
+private fun renderLogin(context: GuiGraphics, panelTop: Int) {
+    context.drawCenteredString(font, Component.literal("Играй на серверах с Ely.by"), centerX, panelTop + 14, COLOR_SUBTITLE)
 
     // The login goes straight to Ely.by, there is no auth host to pick any more.
     val infoY = panelTop + 36
     drawTechPanel(context, centerX - 110, infoY - 6, centerX + 110, infoY + 40, 0x70000000.toInt(), 0x501E654E.toInt())
 
-    context.drawCenteredTextWithShadow(textRenderer, Text.literal("Вход напрямую через Ely.by"), centerX, infoY, COLOR_TEXT)
-    context.drawCenteredTextWithShadow(textRenderer, Text.literal("откроется account.ely.by"), centerX, infoY + 12, COLOR_DIM)
-    context.drawCenteredTextWithShadow(textRenderer, Text.literal("без посредников"), centerX, infoY + 24, COLOR_DIM)
+    context.drawCenteredString(font, Component.literal("Вход напрямую через Ely.by"), centerX, infoY, COLOR_TEXT)
+    context.drawCenteredString(font, Component.literal("откроется account.ely.by"), centerX, infoY + 12, COLOR_DIM)
+    context.drawCenteredString(font, Component.literal("без посредников"), centerX, infoY + 24, COLOR_DIM)
 
-    loginButton.message = Text.literal("Войти через Ely.by")
+    loginButton.message = Component.literal("Войти через Ely.by")
     loginButton.active = true
 }
 
-private fun renderPolling(context: DrawContext, panelTop: Int) {
+private fun renderPolling(context: GuiGraphics, panelTop: Int) {
     val authState = AuthWorkflowManager.currentState()
     val userCode = authState.userCode
     if (userCode == null) {
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal(authState.message), centerX, panelTop + 36, COLOR_SUBTITLE)
+        context.drawCenteredString(font, Component.literal(authState.message), centerX, panelTop + 36, COLOR_SUBTITLE)
     } else {
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal("Подтверди вход в браузере"), centerX, panelTop + 14, COLOR_ACCENT)
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal("выбери аккаунт и нажми «Разрешить»"), centerX, panelTop + 28, COLOR_DIM)
+        context.drawCenteredString(font, Component.literal("Подтверди вход в браузере"), centerX, panelTop + 14, COLOR_ACCENT)
+        context.drawCenteredString(font, Component.literal("выбери аккаунт и нажми «Разрешить»"), centerX, panelTop + 28, COLOR_DIM)
 
         // The code itself, for confirming from a phone if the browser did not open here.
         val codeY = panelTop + 48
         drawTechPanel(context, centerX - 70, codeY - 6, centerX + 70, codeY + 14, 0x70000000.toInt(), 0xFF38B48B.toInt())
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal(userCode.chunked(1).joinToString(" ")), centerX, codeY, COLOR_TEXT)
+        context.drawCenteredString(font, Component.literal(userCode.chunked(1).joinToString(" ")), centerX, codeY, COLOR_TEXT)
 
         val pageUrl = (authState.verificationUri ?: "https://account.ely.by/code").removePrefix("https://")
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal("не открылся? введи код на $pageUrl"), centerX, panelTop + 72, COLOR_DIM)
+        context.drawCenteredString(font, Component.literal("не открылся? введи код на $pageUrl"), centerX, panelTop + 72, COLOR_DIM)
     }
 
     // Polling spinner animation
@@ -345,11 +345,11 @@ private fun renderPolling(context: DrawContext, panelTop: Int) {
     context.fill(spinnerCenterX + (kotlin.math.cos(angle) * radius).toInt() - 2, spinnerCenterY + (kotlin.math.sin(angle) * radius).toInt() - 2, spinnerCenterX + (kotlin.math.cos(angle) * radius).toInt() + 2, spinnerCenterY + (kotlin.math.sin(angle) * radius).toInt() + 2, COLOR_ACCENT)
 }
 
-private fun renderSuccess(context: DrawContext, panelTop: Int) {
+private fun renderSuccess(context: GuiGraphics, panelTop: Int) {
     val session = ClientSessionStore.load()
     ensurePreviewRequested(session)
 
-    context.drawCenteredTextWithShadow(textRenderer, Text.literal("Вы авторизованы ✅"), centerX, panelTop + 14, COLOR_SUCCESS)
+    context.drawCenteredString(font, Component.literal("Вы авторизованы ✅"), centerX, panelTop + 14, COLOR_SUCCESS)
 
     // Skin preview (left side)
     val skinLeft = panelLeft + 10
@@ -365,7 +365,7 @@ private fun renderSuccess(context: DrawContext, panelTop: Int) {
         skinWidget.visible = true
         skinWidget.setX(skinLeft - 10)
         skinWidget.setY(skinTop + 5)
-        skinWidget.setDimensions(140, 140)
+        skinWidget.setSize(140, 140)
 
     // Info (right side)
     val infoLeft = skinLeft + 134
@@ -376,9 +376,9 @@ private fun renderSuccess(context: DrawContext, panelTop: Int) {
 
     drawTechPanel(context, infoLeft - 10, infoY - 10, panelRight, skinTop + 154, 0x70000000.toInt(), 0x501E654E.toInt())
 
-    context.drawTextWithShadow(textRenderer, Text.literal("Ник: $username"), infoLeft, infoY, COLOR_TEXT)
-    context.drawTextWithShadow(textRenderer, Text.literal("UUID: ${uuid.take(13)}..."), infoLeft, infoY + 14, COLOR_DIM)
-    context.drawTextWithShadow(textRenderer, Text.literal("Вход: $host"), infoLeft, infoY + 28, COLOR_DIM)
+    context.drawString(font, Component.literal("Ник: $username"), infoLeft, infoY, COLOR_TEXT)
+    context.drawString(font, Component.literal("UUID: ${uuid.take(13)}..."), infoLeft, infoY + 14, COLOR_DIM)
+    context.drawString(font, Component.literal("Вход: $host"), infoLeft, infoY + 28, COLOR_DIM)
 
     val health = TokenHealthMonitor.currentHealth()
     val remaining = TokenHealthMonitor.remainingTimeText()
@@ -389,18 +389,18 @@ private fun renderSuccess(context: DrawContext, panelTop: Int) {
         TokenHealth.EXPIRED -> "Сессия: истекла ❌" to COLOR_ERROR
         TokenHealth.NOT_AUTHENTICATED -> "Сессия: не активна" to COLOR_DIM
     }
-    context.drawTextWithShadow(textRenderer, Text.literal(statusText), infoLeft, infoY + 46, statusColor)
+    context.drawString(font, Component.literal(statusText), infoLeft, infoY + 46, statusColor)
 
     refreshSessionButton.visible = health == TokenHealth.EXPIRING_SOON
 }
 
-private fun renderError(context: DrawContext, panelTop: Int) {
-    context.drawCenteredTextWithShadow(textRenderer, Text.literal("Ошибка авторизации ❌"), centerX, panelTop + 14, COLOR_ERROR)
+private fun renderError(context: GuiGraphics, panelTop: Int) {
+    context.drawCenteredString(font, Component.literal("Ошибка авторизации ❌"), centerX, panelTop + 14, COLOR_ERROR)
 
     val maxWidth = buttonWidth - 10
     val wrapped = wrapText(errorMessage, maxWidth)
     wrapped.take(4).forEachIndexed { index, line ->
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal(line), centerX, panelTop + 38 + index * 12, COLOR_DIM)
+        context.drawCenteredString(font, Component.literal(line), centerX, panelTop + 38 + index * 12, COLOR_DIM)
     }
 }
 
@@ -473,7 +473,7 @@ private fun renderError(context: DrawContext, panelTop: Int) {
             workingConfig = workingConfig.copy(
                 selectedAuthServerId = selected.id,
                 relayBaseUrl = if (selected.id == ClientAuthConfig.CUSTOM_HOST_ID) {
-                    if (this::customHostField.isInitialized) customHostField.text else workingConfig.customAuthServerUrl
+                    if (this::customHostField.isInitialized) customHostField.value else workingConfig.customAuthServerUrl
                 } else {
                     selected.baseUrl
                 },
@@ -483,7 +483,7 @@ private fun renderError(context: DrawContext, panelTop: Int) {
 
     private fun saveConfig() {
         if (this::customHostField.isInitialized) {
-            workingConfig = workingConfig.copy(customAuthServerUrl = customHostField.text)
+            workingConfig = workingConfig.copy(customAuthServerUrl = customHostField.value)
         }
         syncSelectionIntoConfig()
         ModConfigStore.save(workingConfig)
@@ -505,12 +505,12 @@ private fun renderError(context: DrawContext, panelTop: Int) {
     //  SKIN PREVIEW
     // ══════════════════════════════════════════
 
-    private fun currentSkinTextures(): SkinTextures {
+    private fun currentSkinTextures(): PlayerSkin {
         val session = ClientSessionStore.load()
         val textureId = previewTextureId
         if (textureId != null) {
-            return SkinTextures.create(
-                object : AssetInfo.TextureAsset {
+            return PlayerSkin.insecure(
+                object : ClientAsset.Texture {
                     override fun id(): Identifier = textureId
                     override fun texturePath(): Identifier = textureId
                 },
@@ -521,9 +521,9 @@ private fun renderError(context: DrawContext, panelTop: Int) {
         }
         val uuid = session.elyUuid
             ?.let { rawUuid -> runCatching { UUID.fromString(rawUuid) }.getOrNull() }
-            ?: MinecraftClient.getInstance().session?.uuidOrNull
+            ?: Minecraft.getInstance().user?.profileId
             ?: UUID.randomUUID()
-        return DefaultSkinHelper.getSkinTextures(uuid)
+        return DefaultPlayerSkin.get(uuid)
     }
 
     private fun ensurePreviewRequested(session: ClientSessionState) {
@@ -536,18 +536,18 @@ private fun renderError(context: DrawContext, panelTop: Int) {
             runCatching {
                 val image = URI.create(skinUrl).toURL().openStream().use(NativeImage::read)
                 if (image.height == 32) {
-                    val padded = NativeImage(image.format, 64, 64, true)
+                    val padded = NativeImage(image.format(), 64, 64, true)
                     padded.fillRect(0, 0, 64, 64, 0x00000000)
                     
                     fun copyPixel(sx: Int, sy: Int, dx: Int, dy: Int) {
                         if (sx in 0..63 && sy in 0..31 && dx in 0..63 && dy in 0..63) {
-                            val argb = image.getColorArgb(sx, sy)
+                            val argb = image.getPixel(sx, sy)
                             val a = (argb ushr 24) and 0xFF
                             val r = (argb ushr 16) and 0xFF
                             val g = (argb ushr 8) and 0xFF
                             val b = argb and 0xFF
                             val abgr = (a shl 24) or (b shl 16) or (g shl 8) or r
-                            padded.setColor(dx, dy, abgr)
+                            padded.setPixelABGR(dx, dy, abgr)
                         }
                     }
 
@@ -595,9 +595,9 @@ private fun renderError(context: DrawContext, panelTop: Int) {
         if (!future.isDone) return
         previewFuture = null
         val image = runCatching { future.get() }.getOrNull() ?: return
-        val texture = NativeImageBackedTexture({ "ely-auth-preview" }, image)
-        val textureId = Identifier.of("ely4everyone", "preview/auth_skin")
-        client?.textureManager?.registerTexture(textureId, texture)
+        val texture = DynamicTexture({ "ely-auth-preview" }, image)
+        val textureId = Identifier.fromNamespaceAndPath("ely4everyone", "preview/auth_skin")
+        minecraft?.textureManager?.register(textureId, texture)
         previewTexture?.close()
         previewTexture = texture
         previewTextureId = textureId
@@ -614,11 +614,11 @@ private fun renderError(context: DrawContext, panelTop: Int) {
     // ══════════════════════════════════════════
     //  DRAWING HELPERS
     // ══════════════════════════════════════════
-private fun drawPanel(context: DrawContext, left: Int, top: Int, right: Int, bottom: Int, fillColor: Int, borderColor: Int) {
+private fun drawPanel(context: GuiGraphics, left: Int, top: Int, right: Int, bottom: Int, fillColor: Int, borderColor: Int) {
     drawTechPanel(context, left, top, right, bottom, fillColor, borderColor)
 }
 
-private fun drawMiniPanel(context: DrawContext, left: Int, top: Int, right: Int, bottom: Int) {
+private fun drawMiniPanel(context: GuiGraphics, left: Int, top: Int, right: Int, bottom: Int) {
     drawTechPanel(context, left, top, right, bottom, 0xCC0D1411.toInt(), 0xFF1E654E.toInt())
 }
 
@@ -640,7 +640,7 @@ private fun mixColor(c1: Int, c2: Int, ratio: Float): Int {
     return (a shl 24) or (r shl 16) or (g shl 8) or b
 }
 
-private fun drawTechPanel(context: DrawContext, left: Int, top: Int, right: Int, bottom: Int, fill: Int, border: Int) {
+private fun drawTechPanel(context: GuiGraphics, left: Int, top: Int, right: Int, bottom: Int, fill: Int, border: Int) {
     // Main body (clipped corners)
     context.fill(left + 2, top, right - 2, bottom, fill)
     context.fill(left, top + 2, right, bottom - 2, fill)
@@ -658,7 +658,7 @@ private fun drawTechPanel(context: DrawContext, left: Int, top: Int, right: Int,
     context.fill(right - 2, bottom - 2, right - 1, bottom - 1, border)
 }
 
-private fun drawHologramPlatform(context: DrawContext, centerX: Int, centerY: Int, width: Int) {
+private fun drawHologramPlatform(context: GuiGraphics, centerX: Int, centerY: Int, width: Int) {
     val pulse = ((sin(System.currentTimeMillis() / 800.0) + 1.0) / 2.0).toFloat()
     val color1 = mixColor(0x0045DEAA.toInt(), 0xAA45DEAA.toInt(), pulse)
     val color2 = 0x5538B48B.toInt()
@@ -677,7 +677,7 @@ private fun drawHologramPlatform(context: DrawContext, centerX: Int, centerY: In
         var current = ""
         for (word in words) {
             val candidate = if (current.isBlank()) word else "$current $word"
-            if (textRenderer.getWidth(candidate) <= maxWidth) {
+            if (font.width(candidate) <= maxWidth) {
                 current = candidate
             } else {
                 if (current.isNotBlank()) lines += current
@@ -688,13 +688,13 @@ private fun drawHologramPlatform(context: DrawContext, centerX: Int, centerY: In
         return lines.ifEmpty { listOf(text) }
     }
 
-    private fun extractSkinModel(texturesValue: String?): PlayerSkinType {
+    private fun extractSkinModel(texturesValue: String?): PlayerModelType {
         val decoded = texturesValue?.let {
             runCatching { String(Base64.getDecoder().decode(it), StandardCharsets.UTF_8) }.getOrNull()
-        } ?: return PlayerSkinType.WIDE
+        } ?: return PlayerModelType.WIDE
         val metadata = Regex("\"metadata\"\\s*:\\s*\\{[^}]*\"model\"\\s*:\\s*\"([^\"]+)\"")
             .find(decoded)?.groupValues?.getOrNull(1)
-        return PlayerSkinType.byModelMetadata(metadata)
+        return PlayerModelType.byLegacyServicesName(metadata)
     }
 
     private fun extractSkinUrl(texturesValue: String): String? {

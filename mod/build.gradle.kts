@@ -6,7 +6,6 @@ plugins {
 import java.util.Properties
 
 val minecraftVersion: String by project
-val yarnMappings: String by project
 val fabricLoaderVersion: String by project
 val fabricApiVersion: String by project
 val localProperties = Properties().apply {
@@ -40,7 +39,7 @@ sourceSets {
 
 dependencies {
     minecraft("com.mojang:minecraft:$minecraftVersion")
-    mappings("net.fabricmc:yarn:$yarnMappings:v2")
+    mappings(loom.officialMojangMappings())
     modImplementation("net.fabricmc:fabric-loader:$fabricLoaderVersion")
     modImplementation("net.fabricmc.fabric-api:fabric-api:$fabricApiVersion")
     implementation(kotlin("stdlib"))

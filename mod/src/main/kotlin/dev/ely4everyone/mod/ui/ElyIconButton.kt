@@ -2,14 +2,14 @@ package dev.ely4everyone.mod.ui
 
 import dev.ely4everyone.mod.session.TokenHealthMonitor
 import dev.ely4everyone.mod.session.TokenHealthMonitor.TokenHealth
-import net.minecraft.client.gui.DrawContext
-import net.minecraft.client.gui.screen.narration.NarrationMessageBuilder
-import net.minecraft.client.gui.tooltip.Tooltip
-import net.minecraft.client.gui.widget.PressableWidget
-import net.minecraft.client.gl.RenderPipelines
-import net.minecraft.client.input.AbstractInput
-import net.minecraft.text.Text
-import net.minecraft.util.Identifier
+import net.minecraft.client.gui.GuiGraphics
+import net.minecraft.client.gui.components.AbstractButton
+import net.minecraft.client.gui.components.Tooltip
+import net.minecraft.client.gui.narration.NarrationElementOutput
+import net.minecraft.client.input.InputWithModifiers
+import net.minecraft.client.renderer.RenderPipelines
+import net.minecraft.network.chat.Component
+import net.minecraft.resources.Identifier
 
 /**
  * Квадратная Ely.by-кнопка для title screen с индикатором здоровья токена.
@@ -24,17 +24,17 @@ class ElyIconButton(
     x: Int,
     y: Int,
     private val onPressAction: () -> Unit,
-) : PressableWidget(x, y, SIZE, SIZE, BUTTON_LABEL) {
+) : AbstractButton(x, y, SIZE, SIZE, BUTTON_LABEL) {
 
     init {
         updateTooltip()
     }
 
     fun updateTooltip() {
-        setTooltip(Tooltip.of(Text.literal(TokenHealthMonitor.tooltipText())))
+        setTooltip(Tooltip.create(Component.literal(TokenHealthMonitor.tooltipText())))
     }
 
-    override fun drawIcon(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
+    override fun renderContents(context: GuiGraphics, mouseX: Int, mouseY: Int, delta: Float) {
         val drawX = x
         val drawY = y
 
@@ -42,7 +42,7 @@ class ElyIconButton(
         context.fill(drawX - 1, drawY - 1, drawX + width + 1, drawY + height + 1, COLOR_SHADOW)
 
         // Icon texture
-        context.drawTexture(
+        context.blit(
             RenderPipelines.GUI_TEXTURED,
             ICON_TEXTURE,
             drawX,
@@ -61,7 +61,7 @@ class ElyIconButton(
             TokenHealth.HEALTHY -> COLOR_HEALTHY
             TokenHealth.EXPIRING_SOON -> pulsingColor(COLOR_EXPIRING_DIM, COLOR_EXPIRING_BRIGHT)
             TokenHealth.EXPIRED -> COLOR_EXPIRED
-            TokenHealth.NOT_AUTHENTICATED -> if (isSelected) COLOR_BORDER_HOVER else return
+            TokenHealth.NOT_AUTHENTICATED -> if (isHoveredOrFocused) COLOR_BORDER_HOVER else return
         }
 
         drawBorder(context, drawX, drawY, borderColor)
@@ -80,7 +80,7 @@ class ElyIconButton(
         }
     }
 
-    private fun drawBorder(context: DrawContext, drawX: Int, drawY: Int, color: Int) {
+    private fun drawBorder(context: GuiGraphics, drawX: Int, drawY: Int, color: Int) {
         context.fill(drawX - 1, drawY - 1, drawX + width + 1, drawY, color)
         context.fill(drawX - 1, drawY + height, drawX + width + 1, drawY + height + 1, color)
         context.fill(drawX - 1, drawY, drawX, drawY + height, color)
@@ -105,12 +105,12 @@ class ElyIconButton(
         return channel(a, b, 24) or channel(a, b, 16) or channel(a, b, 8) or channel(a, b, 0)
     }
 
-    override fun onPress(input: AbstractInput) {
+    override fun onPress(input: InputWithModifiers) {
         onPressAction()
     }
 
-    override fun appendClickableNarrations(builder: NarrationMessageBuilder) {
-        appendDefaultNarrations(builder)
+    override fun updateWidgetNarration(builder: NarrationElementOutput) {
+        defaultButtonNarrationText(builder)
     }
 
     companion object {
@@ -125,7 +125,7 @@ class ElyIconButton(
         private val COLOR_EXPIRING_BRIGHT = 0xFFFFD700.toInt() // Bright gold
         private val COLOR_EXPIRED = 0xFFEF4444.toInt()        // Red
 
-        private val BUTTON_LABEL = Text.literal("Ely.by auth")
-        private val ICON_TEXTURE = Identifier.of("ely4everyone", "textures/gui/ely_icon.png")
+        private val BUTTON_LABEL = Component.literal("Ely.by auth")
+        private val ICON_TEXTURE = Identifier.fromNamespaceAndPath("ely4everyone", "textures/gui/ely_icon.png")
     }
 }

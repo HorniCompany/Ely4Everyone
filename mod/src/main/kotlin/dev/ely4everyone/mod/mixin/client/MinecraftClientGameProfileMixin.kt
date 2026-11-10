@@ -2,18 +2,18 @@ package dev.ely4everyone.mod.mixin.client
 
 import com.mojang.authlib.GameProfile
 import dev.ely4everyone.mod.identity.ActiveElyIdentityManager
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.session.ProfileKeys
-import net.minecraft.client.session.Session
+import net.minecraft.client.Minecraft
+import net.minecraft.client.User
+import net.minecraft.client.multiplayer.ProfileKeyPairManager
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
 import org.spongepowered.asm.mixin.injection.Inject
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
 
-@Mixin(MinecraftClient::class)
+@Mixin(Minecraft::class)
 abstract class MinecraftClientGameProfileMixin {
-    @Inject(method = ["getSession"], at = [At("HEAD")], cancellable = true)
-    private fun `ely4everyone$overrideSession`(cir: CallbackInfoReturnable<Session>) {
+    @Inject(method = ["getUser"], at = [At("HEAD")], cancellable = true)
+    private fun `ely4everyone$overrideUser`(cir: CallbackInfoReturnable<User>) {
         ActiveElyIdentityManager.currentSessionOrNull()?.let { cir.returnValue = it }
     }
 
@@ -22,10 +22,10 @@ abstract class MinecraftClientGameProfileMixin {
         ActiveElyIdentityManager.currentGameProfileOrNull()?.let { cir.returnValue = it }
     }
 
-    @Inject(method = ["getProfileKeys"], at = [At("HEAD")], cancellable = true)
-    private fun `ely4everyone$overrideProfileKeys`(cir: CallbackInfoReturnable<ProfileKeys>) {
+    @Inject(method = ["getProfileKeyPairManager"], at = [At("HEAD")], cancellable = true)
+    private fun `ely4everyone$overrideProfileKeys`(cir: CallbackInfoReturnable<ProfileKeyPairManager>) {
         if (ActiveElyIdentityManager.isActive()) {
-            cir.returnValue = ProfileKeys.MISSING
+            cir.returnValue = ProfileKeyPairManager.EMPTY_KEY_MANAGER
         }
     }
 }

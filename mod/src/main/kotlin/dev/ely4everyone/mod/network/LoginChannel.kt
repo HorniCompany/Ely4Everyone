@@ -1,8 +1,8 @@
 package dev.ely4everyone.mod.network
 
-import net.minecraft.util.Identifier
+import net.minecraft.resources.Identifier
 
 object LoginChannel {
-    val ID: Identifier = Identifier.of("ely4everyone", "login")
+    val ID: Identifier = Identifier.fromNamespaceAndPath("ely4everyone", "login")
 }
 

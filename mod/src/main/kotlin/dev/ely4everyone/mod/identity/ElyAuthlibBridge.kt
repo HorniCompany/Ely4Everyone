@@ -2,14 +2,14 @@ package dev.ely4everyone.mod.identity
 
 import dev.ely4everyone.mod.Ely4EveryoneClientMod
 import dev.ely4everyone.mod.session.ClientSessionStore
-import net.minecraft.client.MinecraftClient
-import net.minecraft.text.Text
-import org.slf4j.LoggerFactory
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
+import net.minecraft.client.Minecraft
+import net.minecraft.network.chat.Component
+import org.slf4j.LoggerFactory
 
 object ElyAuthlibBridge {
     private val logger = LoggerFactory.getLogger("${Ely4EveryoneClientMod.MOD_ID}/authlib")
@@ -20,16 +20,16 @@ object ElyAuthlibBridge {
         return ClientSessionStore.load().hasUsableElyAccessToken()
     }
 
-    fun tryJoinServerSession(serverId: String): Text? {
-        val client = MinecraftClient.getInstance()
-        val session = client.session ?: return null
-        val uuid = session.uuidOrNull ?: return null
+    fun tryJoinServerSession(serverId: String): Component? {
+        val client = Minecraft.getInstance()
+        val session = client.user ?: return null
+        val uuid = session.profileId ?: return null
         val accessToken = session.accessToken
 
         if (accessToken.isBlank()) {
-            return Text.translatable(
+            return Component.translatable(
                 "disconnect.loginFailedInfo",
-                Text.translatable("disconnect.loginFailedInfo.invalidSession"),
+                Component.translatable("disconnect.loginFailedInfo.invalidSession"),
             )
         }
 
@@ -52,11 +52,11 @@ object ElyAuthlibBridge {
                     response.statusCode(),
                     response.body(),
                 )
-                Text.translatable("disconnect.loginFailedInfo", "Ely session join failed: HTTP ${response.statusCode()}")
+                Component.translatable("disconnect.loginFailedInfo", "Ely session join failed: HTTP ${response.statusCode()}")
             }
         } catch (exception: Exception) {
             logger.warn("Ely joinServerSession failed.", exception)
-            Text.translatable("disconnect.loginFailedInfo", exception.message ?: "Authentication error")
+            Component.translatable("disconnect.loginFailedInfo", exception.message ?: "Authentication error")
         }
     }
 }

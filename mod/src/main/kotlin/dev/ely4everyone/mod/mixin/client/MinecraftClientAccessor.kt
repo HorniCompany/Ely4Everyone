@@ -1,14 +1,14 @@
 package dev.ely4everyone.mod.mixin.client
 
-import net.minecraft.client.MinecraftClient
-import net.minecraft.client.session.Session
+import net.minecraft.client.Minecraft
+import net.minecraft.client.User
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.Mutable
 import org.spongepowered.asm.mixin.gen.Accessor
 
-@Mixin(MinecraftClient::class)
+@Mixin(Minecraft::class)
 interface MinecraftClientAccessor {
     @Mutable
-    @Accessor("session")
-    fun `ely4everyone$setSession`(session: Session)
+    @Accessor("user")
+    fun `ely4everyone$setUser`(user: User)
 }
