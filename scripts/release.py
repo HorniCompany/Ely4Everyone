@@ -158,8 +158,9 @@ def main() -> None:
     else:
         print("building (tests included)...")
         gradlew = "gradlew.bat" if os.name == "nt" else "./gradlew"
-        run(str(ROOT / gradlew), ":mod:build", ":velocity-plugin:build", "-q", capture=False)
-        jars = [ROOT / "mod/build/libs" / mod_jar_name,
+        # Only the 1.21.11 node for now; one jar per Minecraft version comes with task 2.4.
+        run(str(ROOT / gradlew), ":mod:1.21.11:build", ":velocity-plugin:build", "-q", capture=False)
+        jars = [ROOT / "mod/versions/1.21.11/build/libs" / mod_jar_name,
                 ROOT / "velocity-plugin/build/libs" / f"ely4everyone-velocity-plugin-{version}.jar"]
         missing = [str(jar) for jar in jars if not jar.exists()]
         if missing:

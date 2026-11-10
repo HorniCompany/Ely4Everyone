@@ -5,7 +5,10 @@ plugins {
 
 import java.util.Properties
 
+// Per node: mod/versions/<version>/gradle.properties
 val minecraftVersion: String by project
+val minecraftDependency: String by project
+val javaVersion: String by project
 val fabricLoaderVersion: String by project
 val fabricApiVersion: String by project
 val localProperties = Properties().apply {
@@ -26,14 +29,14 @@ val localModJarPattern = "${base.archivesName.get()}-*.jar"
 
 java {
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(21))
+        languageVersion.set(JavaLanguageVersion.of(javaVersion.toInt()))
     }
     withSourcesJar()
 }
 
 sourceSets {
     named("main") {
-        java.srcDir("../shared-auth/src/main/kotlin")
+        java.srcDir(rootProject.file("shared-auth/src/main/kotlin"))
     }
 }
 
@@ -65,9 +68,20 @@ tasks.jar {
 
 tasks.processResources {
     inputs.property("version", project.version)
+    inputs.property("minecraftDependency", minecraftDependency)
+    inputs.property("javaVersion", javaVersion)
     filesMatching("fabric.mod.json") {
-        expand("version" to project.version)
+        expand(
+            "version" to project.version,
+            "minecraftDependency" to minecraftDependency,
+            "javaVersion" to javaVersion,
+        )
     }
+}
+
+loom {
+    // Every version shares mod/run (options, worlds, servers list).
+    runConfigs.all { runDir = "../../run" }
 }
 
 val syncToLocalMods by tasks.registering(Copy::class) {
@@ -140,4 +154,4 @@ tasks.test {
     System.getProperty("ely4everyone.liveLogin")?.let { systemProperty("ely4everyone.liveLogin", it) }
 }
 
-// Kotlin compiles with the java toolchain above (Java 21 for 1.21.x).
+// Kotlin compiles with the java toolchain above (javaVersion of the node).
