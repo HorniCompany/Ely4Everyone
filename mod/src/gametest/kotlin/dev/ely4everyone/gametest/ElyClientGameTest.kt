@@ -110,6 +110,7 @@ class ElyClientGameTest : FabricClientGameTest {
         }
         context.waitFor({ Language.getInstance().getOrDefault("ely4everyone.button.login") == "Войти через Ely.by" }, 20 * 60)
         context.waitForScreen(TitleScreen::class.java)
+        context.waitTicks(60) // let the resource reload overlay fade out before the screenshot
         elyScreenOpens(context, "ely-screen-ru")
     }
 
