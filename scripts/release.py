@@ -242,8 +242,11 @@ def main() -> None:
             data = {
                 "project_id": project["id"],
                 "version_number": number,
-                "name": f"{version} for {props['minecraftVersion']}: {english_title}",
-                "changelog": english_notes,
+                # Modrinth caps version titles at 64 characters; the full title opens the changelog.
+                "name": f"{version} for {props['minecraftVersion']}",
+                "changelog": f"## {english_title}
+
+{english_notes}",
                 "dependencies": [{"project_id": FABRIC_API_PROJECT_ID, "dependency_type": "required"}],
                 "game_versions": game_versions(props),
                 "version_type": version_type(version),
