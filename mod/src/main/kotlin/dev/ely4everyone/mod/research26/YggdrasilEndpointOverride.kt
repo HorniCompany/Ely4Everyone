@@ -11,7 +11,7 @@ data class AuthlibServiceRoots(
 
 object YggdrasilEndpointOverride {
     fun enabled(): Boolean {
-        return System.getProperty("ely4everyone.research26.redirectSessionHost", "false")
+        return System.getProperty(Research26MixinPlugin.REDIRECT_FLAG, "false")
             .equals("true", ignoreCase = true)
     }
 

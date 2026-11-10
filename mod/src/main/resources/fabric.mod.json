@@ -10,7 +10,8 @@
   ],
   "environment": "client",
   "mixins": [
-    "ely4everyone.mixins.json"
+    "ely4everyone.mixins.json",
+    "ely4everyone.research26.mixins.json"
   ],
   "entrypoints": {
     "client": [

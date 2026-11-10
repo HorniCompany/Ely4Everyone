@@ -8,7 +8,7 @@ object Research26TraceBus {
     private val emitted = linkedSetOf<Pair<String, String>>()
 
     fun enabled(): Boolean {
-        return System.getProperty("ely4everyone.research26.trace", "false").equals("true", ignoreCase = true)
+        return System.getProperty(Research26MixinPlugin.TRACE_FLAG, "false").equals("true", ignoreCase = true)
     }
 
     fun record(operation: String, url: String) {

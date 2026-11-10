@@ -1,0 +1,13 @@
+{
+  "required": false,
+  "package": "dev.ely4everyone.mod.mixin.client",
+  "plugin": "dev.ely4everyone.mod.research26.Research26MixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "EnvironmentMixin",
+    "YggdrasilResearchTraceMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}
