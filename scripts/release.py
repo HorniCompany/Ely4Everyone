@@ -167,7 +167,7 @@ def modrinth_body() -> str:
     text = (ROOT / "README.en.md").read_text(encoding="utf-8")
     text = re.sub(r"\n[^\n]*README\.md[^\n]*\n", "\n", text)  # the "read in Russian" line
     text = text.replace("<br>\n</p>", "\n</p>")
-    text = text.replace('src="img/vector/banner.svg"', f'src="{RAW}img/banner.png"')
+    text = text.replace('src="img/vector/banner-slim.svg"', f'src="{RAW}img/banner-slim.png"')
     text = re.sub(r'src="(img/[^"]+)"', lambda m: f'src="{RAW}{m.group(1)}"', text)
     text = text.replace('href="LICENSE"', f'href="{GITHUB}LICENSE"').replace("](LICENSE)", f"]({GITHUB}LICENSE)")
     text = text.replace("> [!WARNING]\n", "> ⚠️ **Warning**\n>\n")
