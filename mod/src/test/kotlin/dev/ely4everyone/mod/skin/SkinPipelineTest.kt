@@ -62,7 +62,6 @@ class SkinPipelineTest {
     @Test
     fun `saved login with a skin gives the identity signed textures and a textures property`() {
         val session = ClientSessionState(
-            relayBaseUrl = "",
             elyAccessToken = "token",
             authSessionExpiresAt = Instant.now().plusSeconds(3600),
             elyUsername = "Cokeef",

@@ -5,7 +5,6 @@
   "ely4everyone.state.confirm_in_browser": "Confirm the login in your browser, the game picks it up by itself...",
   "ely4everyone.state.logged_out": "Local Ely.by session cleared.",
   "ely4everyone.state.cancelled": "Login cancelled.",
-  "ely4everyone.state.refresh_failed": "Could not renew the login (%s: %s). Log in with Ely.by again.",
   "ely4everyone.state.code_expired": "the code expired, try again.",
   "ely4everyone.state.denied": "the login was declined on Ely.by.",
   "ely4everyone.state.success": "Logged in: %s",

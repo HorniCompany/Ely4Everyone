@@ -37,9 +37,6 @@ data class AuthFlowState(
  * The browser opens on account.ely.by with the code already filled in, the player confirms, and
  * [tick] keeps asking Ely whether the code was confirmed. The screen also shows the code, so the
  * player can confirm it from another device if the browser did not open.
- *
- * Sessions made by older versions through an auth host keep working: [refreshSession] still renews
- * them through that host until the player logs in again.
  */
 object AuthWorkflowManager {
     private val logger = LoggerFactory.getLogger("${Ely4EveryoneClientMod.MOD_ID}/auth")
@@ -193,7 +190,7 @@ object AuthWorkflowManager {
         return saved
     }
 
-    /** Renews the stored login: directly at Ely.by, or through the auth host for older sessions. */
+    /** Renews the stored login directly at Ely.by with its refresh token. */
     fun refreshSession(): Boolean {
         val seenSession = ClientSessionStore.load()
         // All games of this user share one login. Only one may renew it at a time, or a refresh token
@@ -206,8 +203,7 @@ object AuthWorkflowManager {
                     MinecraftClientSessionBridge.refreshActiveIdentity()
                     true
                 }
-                currentSession.isDirectLogin -> refreshDirectSession(currentSession)
-                else -> refreshRelaySession(currentSession)
+                else -> refreshDirectSession(currentSession)
             }
         } ?: run {
             logger.info("Another game is renewing the Ely login right now, skipping this attempt.")
@@ -241,46 +237,6 @@ object AuthWorkflowManager {
             true
         } catch (exception: Exception) {
             logger.warn("Refreshing the Ely login failed: {}", exception.toString())
-            false
-        }
-    }
-
-    private fun refreshRelaySession(currentSession: ClientSessionState): Boolean {
-        val authSessionToken = currentSession.authSessionToken
-        if (authSessionToken.isNullOrBlank() || currentSession.relayBaseUrl.isBlank()) {
-            logger.warn("Cannot auto-refresh: missing session token or relay base url.")
-            return false
-        }
-
-        return try {
-            val result = AuthHostClient.refreshSession(currentSession.relayBaseUrl, authSessionToken)
-            if (result.status == "completed") {
-                val expiresAt = result.expiresAtEpochSeconds ?: return false
-                val elyAccessToken = result.elyAccessToken ?: return false
-
-                ClientSessionStore.save(
-                    currentSession.copy(
-                        elyAccessToken = elyAccessToken,
-                        authSessionExpiresAt = Instant.ofEpochSecond(expiresAt),
-                        elyUsername = result.username ?: currentSession.elyUsername,
-                        elyUuid = result.uuid ?: currentSession.elyUuid,
-                        elyTexturesValue = result.texturesValue ?: currentSession.elyTexturesValue,
-                        elyTexturesSignature = result.texturesSignature ?: currentSession.elyTexturesSignature,
-                    ),
-                )
-                MinecraftClientSessionBridge.refreshActiveIdentity()
-                logger.info("Successfully refreshed Ely session token via auth host.")
-                true
-            } else {
-                logger.warn("Refresh failed with status {}", result.status)
-                state = AuthFlowState(
-                    status = AuthFlowStatus.ERROR,
-                    message = Lang.tr("state.refresh_failed", result.status.toString(), result.error.toString()),
-                )
-                false
-            }
-        } catch (e: Exception) {
-            logger.error("Auto-refresh error", e)
             false
         }
     }
@@ -356,7 +312,6 @@ object AuthWorkflowManager {
     private fun finishLogin(tokens: ElyTokens, profile: ElyProfile) {
         ClientSessionStore.save(
             ClientSessionState(
-                relayBaseUrl = "",
                 elyAccessToken = tokens.accessToken,
                 elyRefreshToken = tokens.refreshToken,
                 authSessionExpiresAt = expiryOf(tokens),

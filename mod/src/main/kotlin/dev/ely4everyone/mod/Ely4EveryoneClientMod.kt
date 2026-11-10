@@ -25,9 +25,7 @@ class Ely4EveryoneClientMod : ClientModInitializer {
 
         // Attempt to silently refresh an expiring/expired session at boot time
         // so the player doesn't have to re-login through browser every day
-        val canRefresh = !sessionState.elyRefreshToken.isNullOrBlank() ||
-            (!sessionState.authSessionToken.isNullOrBlank() && sessionState.relayBaseUrl.isNotBlank())
-        if (canRefresh) {
+        if (!sessionState.elyRefreshToken.isNullOrBlank()) {
             java.util.concurrent.CompletableFuture.runAsync {
                 TokenHealthMonitor.bootTimeRefresh()
             }

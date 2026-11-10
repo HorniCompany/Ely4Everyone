@@ -57,26 +57,19 @@ class ElyDirectLoginTest {
     }
 
     @Test
-    fun `direct and relay sessions are told apart`() {
+    fun `a direct session is signed in until its access token expires`() {
         val now = Instant.parse("2026-10-21T00:00:00Z")
         val direct = ClientSessionState(
-            relayBaseUrl = "",
             elyAccessToken = "acc",
             elyRefreshToken = "ref",
             authSessionExpiresAt = now.plusSeconds(3600),
             elyUsername = "Cokeef",
             elyUuid = "ed9f5370-0000-0000-0000-000000000000",
         )
-        assertTrue(direct.isDirectLogin)
         assertTrue(direct.isSignedIn(now))
-        assertFalse(direct.hasUsableAuthSession(now))
-
-        val relay = direct.copy(relayBaseUrl = "https://horni.cc/auth/ely4everyone", authSessionToken = "session", elyRefreshToken = null)
-        assertFalse(relay.isDirectLogin)
-        assertTrue(relay.isSignedIn(now))
 
         assertFalse(direct.isSignedIn(now.plusSeconds(7200)))
-        assertNull(ClientSessionState(relayBaseUrl = "").elyRefreshToken)
-        assertFalse(ClientSessionState(relayBaseUrl = "").isSignedIn(now))
+        assertNull(ClientSessionState().elyRefreshToken)
+        assertFalse(ClientSessionState().isSignedIn(now))
     }
 }

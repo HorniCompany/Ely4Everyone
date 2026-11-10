@@ -44,8 +44,6 @@ class SessionRepository(
         val profile = readProperties(profileFile) ?: return emptyState()
         val secrets = vault.read()?.let(::parseProperties) ?: Properties()
         val state = ClientSessionState(
-            relayBaseUrl = profile.getProperty("relay_base_url", DEFAULT_RELAY_BASE_URL),
-            authSessionToken = secrets.getProperty("auth_session_token")?.ifBlank { null },
             elyAccessToken = secrets.getProperty("ely_access_token")?.ifBlank { null },
             authSessionExpiresAt = profile.getProperty("auth_session_expires_at")
                 ?.takeIf { it.isNotBlank() }
@@ -63,14 +61,12 @@ class SessionRepository(
 
     fun save(state: ClientSessionState) = withLock {
         val secrets = Properties().apply {
-            setProperty("auth_session_token", state.authSessionToken.orEmpty())
             setProperty("ely_access_token", state.elyAccessToken.orEmpty())
             setProperty("ely_refresh_token", state.elyRefreshToken.orEmpty())
         }
         // Tokens first: a game that sees the new profile file must also find the new tokens.
         vault.write(toText(secrets))
         val profile = Properties().apply {
-            setProperty("relay_base_url", state.relayBaseUrl)
             setProperty("auth_session_expires_at", state.authSessionExpiresAt?.epochSecond?.toString().orEmpty())
             setProperty("ely_username", state.elyUsername.orEmpty())
             setProperty("ely_uuid", state.elyUuid.orEmpty())
@@ -119,7 +115,7 @@ class SessionRepository(
         }
     }
 
-    private fun emptyState() = ClientSessionState(relayBaseUrl = DEFAULT_RELAY_BASE_URL)
+    private fun emptyState() = ClientSessionState()
 
     private data class Stamp(val modified: FileTime, val size: Long)
 
@@ -156,6 +152,5 @@ class SessionRepository(
     companion object {
         const val PROFILE_FILE_NAME: String = "session.properties"
         const val LOCK_FILE_NAME: String = "session.lock"
-        const val DEFAULT_RELAY_BASE_URL: String = "http://127.0.0.1:18085"
     }
 }

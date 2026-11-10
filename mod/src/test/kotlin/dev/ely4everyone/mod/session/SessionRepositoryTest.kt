@@ -25,7 +25,6 @@ class SessionRepositoryTest {
     }
 
     private val signedIn = ClientSessionState(
-        relayBaseUrl = "",
         elyAccessToken = "access-token-value",
         elyRefreshToken = "refresh-token-value",
         authSessionExpiresAt = Instant.ofEpochSecond(2_000_000_000),
@@ -40,7 +39,6 @@ class SessionRepositoryTest {
         val state = SessionRepository(directory, vault).load()
 
         assertFalse(state.isSignedIn())
-        assertEquals(SessionRepository.DEFAULT_RELAY_BASE_URL, state.relayBaseUrl)
     }
 
     @Test

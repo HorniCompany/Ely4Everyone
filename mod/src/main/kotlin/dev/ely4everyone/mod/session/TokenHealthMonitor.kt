@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory
  * Monitors the health of the current Ely.by session token.
  *
  * Called every client tick. Checks expiration, triggers auto-refresh
- * via auth-host when the token is about to expire or has already expired,
+ * at Ely.by when the token is about to expire or has already expired,
  * and exposes [currentHealth] for UI indicators.
  *
  * Also periodically refreshes the player skin from Ely.by (every 5 minutes)
@@ -185,9 +185,7 @@ object TokenHealthMonitor {
     }
 
     private fun canRenew(session: ClientSessionState): Boolean {
-        val hasRenewal = !session.elyRefreshToken.isNullOrBlank() ||
-            (!session.authSessionToken.isNullOrBlank() && session.relayBaseUrl.isNotBlank())
-        return hasRenewal && !session.elyUsername.isNullOrBlank() && !session.elyUuid.isNullOrBlank()
+        return !session.elyRefreshToken.isNullOrBlank() && !session.elyUsername.isNullOrBlank() && !session.elyUuid.isNullOrBlank()
     }
 
     private fun tryAutoRefresh() {

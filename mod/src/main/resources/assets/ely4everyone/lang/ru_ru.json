@@ -5,7 +5,6 @@
   "ely4everyone.state.confirm_in_browser": "Подтверди вход в браузере, игра подхватит его сама...",
   "ely4everyone.state.logged_out": "Локальная Ely-сессия очищена.",
   "ely4everyone.state.cancelled": "Авторизация отменена.",
-  "ely4everyone.state.refresh_failed": "Не удалось продлить вход (%s: %s). Войди через Ely.by заново.",
   "ely4everyone.state.code_expired": "код истёк, попробуй ещё раз.",
   "ely4everyone.state.denied": "вход отклонён на Ely.by.",
   "ely4everyone.state.success": "Вход завершен: %s",
