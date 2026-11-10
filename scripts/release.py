@@ -3,19 +3,24 @@
     python scripts/release.py              # build, then publish whatever is missing
     python scripts/release.py --dry-run    # show what would happen, publish nothing
 
+The mod is built once per Minecraft version (the Stonecutter nodes in settings.gradle.kts,
+settings in mod/versions/<minecraft>/gradle.properties). Each jar is
+ely4everyone-mod-<version>+<minecraft>.jar.
+
 Steps, each skipped when already done:
 1. Checks that the working tree is clean and HEAD is pushed to origin/main.
-2. GitHub: if release v<version> is missing, builds the jars (tests run too) and creates the
-   release with the mod and Velocity plugin jars.
-3. Modrinth: if version <version> is missing, uploads the mod jar **downloaded from the GitHub
-   release**, so both places ship byte-identical files.
+2. GitHub: if release v<version> is missing, builds every node (tests run too) and creates one
+   release with all mod jars and the Velocity plugin jar.
+3. Modrinth: one version per Minecraft version, number <version>+<minecraft>, game versions from
+   modrinthGameVersions in the node properties (default: the node's own version). Each jar is
+   **downloaded from the GitHub release**, so both places ship byte-identical files.
 
 Release notes live in changelog/<version>.md: the first line `# Title` is the release title,
 the rest is the body used on GitHub and Modrinth.
 
 The Modrinth token comes from the PAT_MODRINTH environment variable or, if unset, from a
 PAT_MODRINTH= line in ~/.env (override with --env-file). It is never printed.
-Needs: git, gh (logged in), JDK 21 for the build.
+Needs: git, gh (logged in). Gradle fetches the JDKs it needs (21 and 25) by itself.
 """
 
 from __future__ import annotations
@@ -61,11 +66,33 @@ def read_version() -> str:
     return match.group(1)
 
 
-def read_minecraft_version() -> str:
-    match = re.search(r"^minecraftVersion=(\S+)", (ROOT / "gradle.properties").read_text(encoding="utf-8"), re.M)
+def read_nodes() -> list[str]:
+    """Minecraft versions the mod is built for, from stonecutter { create(":mod") { versions(...) } }."""
+    settings = (ROOT / "settings.gradle.kts").read_text(encoding="utf-8")
+    match = re.search(r"versions\(([^)]*)\)", settings)
     if not match:
-        sys.exit("no minecraftVersion in gradle.properties")
-    return match.group(1)
+        sys.exit("no Stonecutter versions(...) in settings.gradle.kts")
+    nodes = re.findall(r'"([^"]+)"', match.group(1))
+    if not nodes:
+        sys.exit("empty Stonecutter versions(...) in settings.gradle.kts")
+    return nodes
+
+
+def read_node_properties(node: str) -> dict[str, str]:
+    path = ROOT / "mod" / "versions" / node / "gradle.properties"
+    properties = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            key, value = line.split("=", 1)
+            properties[key.strip()] = value.strip()
+    if "minecraftVersion" not in properties:
+        sys.exit(f"no minecraftVersion in {path.relative_to(ROOT)}")
+    return properties
+
+
+def game_versions(properties: dict[str, str]) -> list[str]:
+    listed = properties.get("modrinthGameVersions", "")
+    return [v.strip() for v in listed.split(",") if v.strip()] or [properties["minecraftVersion"]]
 
 
 def read_changelog(version: str) -> tuple[str, str]:
@@ -135,10 +162,10 @@ def main() -> None:
 
     version = read_version()
     tag = f"v{version}"
-    minecraft = read_minecraft_version()
     title, notes = read_changelog(version)
-    mod_jar_name = f"ely4everyone-mod-{version}.jar"
-    print(f"release {tag} ({title}), Minecraft {minecraft}")
+    nodes = {node: read_node_properties(node) for node in read_nodes()}
+    mod_jars = {node: f"ely4everyone-mod-{version}+{props['minecraftVersion']}.jar" for node, props in nodes.items()}
+    print(f"release {tag} ({title}), Minecraft: {', '.join(nodes)}")
 
     # 1. Only publish what is in the public history.
     if git("status", "--porcelain", "--untracked-files=no"):
@@ -158,10 +185,10 @@ def main() -> None:
     else:
         print("building (tests included)...")
         gradlew = "gradlew.bat" if os.name == "nt" else "./gradlew"
-        # Only the 1.21.11 node for now; one jar per Minecraft version comes with task 2.4.
-        run(str(ROOT / gradlew), ":mod:1.21.11:build", ":velocity-plugin:build", "-q", capture=False)
-        jars = [ROOT / "mod/versions/1.21.11/build/libs" / mod_jar_name,
-                ROOT / "velocity-plugin/build/libs" / f"ely4everyone-velocity-plugin-{version}.jar"]
+        run(str(ROOT / gradlew), *[f":mod:{node}:build" for node in nodes], ":velocity-plugin:build", "-q",
+            capture=False)
+        jars = [ROOT / "mod" / "versions" / node / "build" / "libs" / jar for node, jar in mod_jars.items()]
+        jars.append(ROOT / "velocity-plugin/build/libs" / f"ely4everyone-velocity-plugin-{version}.jar")
         missing = [str(jar) for jar in jars if not jar.exists()]
         if missing:
             sys.exit(f"build did not produce: {missing}")
@@ -172,39 +199,40 @@ def main() -> None:
         os.unlink(notes_file.name)
         print(f"GitHub: created https://github.com/{REPO}/releases/tag/{tag}")
 
-    # 3. Modrinth, with the very jar from the GitHub release.
+    # 3. Modrinth: one version per Minecraft version, with the very jars from the GitHub release.
     project = modrinth("GET", f"/project/{MODRINTH_PROJECT}")
     published = {v["version_number"] for v in modrinth("GET", f"/project/{project['id']}/version")}
-    if version in published:
-        print(f"Modrinth: {version} already exists, skipping")
-        return
-
-    data = {
-        "project_id": project["id"],
-        "version_number": version,
-        "name": f"{version}: {title}",
-        "changelog": notes,
-        "dependencies": [{"project_id": FABRIC_API_PROJECT_ID, "dependency_type": "required"}],
-        "game_versions": [minecraft],
-        "version_type": version_type(version),
-        "loaders": ["fabric"],
-        "featured": True,
-        "status": "listed",
-        "file_parts": ["file"],
-        "primary_file": "file",
-    }
-    if args.dry_run:
-        shown = {k: v for k, v in data.items() if k != "changelog"}
-        print(f"Modrinth: would upload {mod_jar_name} from the GitHub release with {json.dumps(shown, ensure_ascii=False)}")
-        return
-
-    token = modrinth_token(args.env_file)
+    token = None
     with tempfile.TemporaryDirectory() as download_dir:
-        run("gh", "release", "download", tag, "-R", REPO, "--pattern", mod_jar_name, "--dir", download_dir)
-        jar_bytes = (Path(download_dir) / mod_jar_name).read_bytes()
-    body, content_type = multipart(data, mod_jar_name, jar_bytes)
-    created = modrinth("POST", "/version", token, body, content_type)
-    print(f"Modrinth: published https://modrinth.com/mod/{MODRINTH_PROJECT}/version/{created['id']}")
+        for node, props in nodes.items():
+            number = f"{version}+{props['minecraftVersion']}"
+            jar_name = mod_jars[node]
+            if number in published:
+                print(f"Modrinth: {number} already exists, skipping")
+                continue
+            data = {
+                "project_id": project["id"],
+                "version_number": number,
+                "name": f"{version} for {props['minecraftVersion']}: {title}",
+                "changelog": notes,
+                "dependencies": [{"project_id": FABRIC_API_PROJECT_ID, "dependency_type": "required"}],
+                "game_versions": game_versions(props),
+                "version_type": version_type(version),
+                "loaders": ["fabric"],
+                "featured": True,
+                "status": "listed",
+                "file_parts": ["file"],
+                "primary_file": "file",
+            }
+            if args.dry_run:
+                shown = {k: v for k, v in data.items() if k != "changelog"}
+                print(f"Modrinth: would upload {jar_name} from the GitHub release with {json.dumps(shown, ensure_ascii=False)}")
+                continue
+            token = token or modrinth_token(args.env_file)
+            run("gh", "release", "download", tag, "-R", REPO, "--pattern", jar_name, "--dir", download_dir)
+            body, content_type = multipart(data, jar_name, (Path(download_dir) / jar_name).read_bytes())
+            created = modrinth("POST", "/version", token, body, content_type)
+            print(f"Modrinth: published https://modrinth.com/mod/{MODRINTH_PROJECT}/version/{created['id']}")
 
 
 if __name__ == "__main__":

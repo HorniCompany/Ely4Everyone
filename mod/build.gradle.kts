@@ -30,6 +30,10 @@ val localModsDir = localProperties.getProperty("ely4everyone.modsDir")
     ?.trim()
     ?.takeIf { it.isNotEmpty() }
 
+// One jar per Minecraft version: ely4everyone-mod-<mod version>+<minecraft>.jar, the same string
+// lands in fabric.mod.json and becomes the Modrinth version number.
+version = "${rootProject.version}+$minecraftVersion"
+
 base {
     archivesName.set("ely4everyone-mod")
 }
