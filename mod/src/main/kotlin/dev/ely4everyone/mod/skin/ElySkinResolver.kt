@@ -5,6 +5,7 @@ import com.mojang.authlib.minecraft.MinecraftProfileTexture
 import com.mojang.authlib.minecraft.MinecraftProfileTextures
 import org.slf4j.LoggerFactory
 import java.net.URI
+import java.net.URLEncoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
@@ -53,6 +54,9 @@ object ElySkinResolver {
      * Returns null if no Ely.by skin exists (caller should fall back to Mojang).
      */
     fun resolve(username: String): CompletableFuture<MinecraftProfileTextures?> {
+        // NPCs and plugin entities carry names no player can have (spaces, § colours, slashes...).
+        // They have no Ely.by skin; building a URL from them used to throw and crash the game.
+        val url = skinUrl(username) ?: return CompletableFuture.completedFuture(null)
         val key = username.lowercase()
 
         // Check cache first
@@ -61,7 +65,8 @@ object ElySkinResolver {
             return CompletableFuture.completedFuture(cached.textures)
         }
 
-        return fetchFromApi(username).thenApply { textures ->
+        val request = runCatching { fetchFromApi(url) }.getOrElse { CompletableFuture.failedFuture(it) }
+        return request.thenApply { textures ->
             cache[key] = CachedResult(textures, Instant.now())
             textures
         }.exceptionally { ex ->
@@ -100,9 +105,18 @@ object ElySkinResolver {
      */
     fun cacheSize(): Int = cache.size
 
-    private fun fetchFromApi(username: String): CompletableFuture<MinecraftProfileTextures?> {
+    /**
+     * The skin system URL for a player name, or null when the name cannot belong to a player:
+     * Minecraft and Ely.by names are 1-16 letters, digits, '_' or '-'.
+     */
+    internal fun skinUrl(username: String): URI? {
+        if (!PLAYER_NAME.matches(username)) return null
+        return runCatching { URI(SKINSYSTEM_URL + URLEncoder.encode(username, Charsets.UTF_8)) }.getOrNull()
+    }
+
+    private fun fetchFromApi(url: URI): CompletableFuture<MinecraftProfileTextures?> {
         val request = HttpRequest.newBuilder()
-            .uri(URI.create("$SKINSYSTEM_URL${username}"))
+            .uri(url)
             .timeout(HTTP_TIMEOUT)
             .GET()
             .build()
@@ -172,6 +186,7 @@ object ElySkinResolver {
         }.getOrNull()
     }
 
+    private val PLAYER_NAME = Regex("""[\p{L}\p{N}_-]{1,16}""")
     private val VALUE_REGEX = Regex(""""value"\s*:\s*"([^"]+)"""")
     private val SIGNATURE_REGEX = Regex(""""signature"\s*:\s*"([^"]+)"""")
     private val SKIN_URL_REGEX = Regex(""""SKIN"\s*:\s*\{[^}]*"url"\s*:\s*"([^"]+)"""")

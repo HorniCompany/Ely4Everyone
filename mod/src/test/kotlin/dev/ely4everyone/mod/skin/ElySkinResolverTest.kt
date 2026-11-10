@@ -135,4 +135,24 @@ class ElySkinResolverTest {
         ElySkinResolver.clearCache()
         assertEquals(0, ElySkinResolver.cacheSize())
     }
+
+    // 2026-11-10: a nickname with a space (NPCs, e.g. Citizens), a § colour code or a slash went into
+    // the skin URL as is, URI.create threw inside skin loading and the game crashed.
+    @Test
+    fun `names that are no player names are never looked up and never throw`() {
+        val bad = listOf("Bad Name", "§cAdmin", "a/b", "a?b", "a#b", "", " ", "x".repeat(17), "tab\tname", "new\nline")
+        for (name in bad) {
+            assertNull(ElySkinResolver.skinUrl(name), "no lookup URL for '$name'")
+            val result = runCatching { ElySkinResolver.resolve(name) }
+            assertTrue(result.isSuccess, "resolve('$name') threw ${result.exceptionOrNull()}")
+            assertNull(result.getOrThrow().getNow(null), "'$name' resolves to no Ely skin right away")
+        }
+    }
+
+    @Test
+    fun `player names make a valid skin system URL`() {
+        assertEquals("http://skinsystem.ely.by/textures/signed/Cokeef", ElySkinResolver.skinUrl("Cokeef").toString())
+        assertEquals("http://skinsystem.ely.by/textures/signed/Erick_Skrauch-1", ElySkinResolver.skinUrl("Erick_Skrauch-1").toString())
+        assertNotNull(ElySkinResolver.skinUrl("x".repeat(16)))
+    }
 }
