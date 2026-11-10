@@ -244,9 +244,7 @@ def main() -> None:
                 "version_number": number,
                 # Modrinth caps version titles at 64 characters; the full title opens the changelog.
                 "name": f"{version} for {props['minecraftVersion']}",
-                "changelog": f"## {english_title}
-
-{english_notes}",
+                "changelog": f"## {english_title}\n\n{english_notes}",
                 "dependencies": [{"project_id": FABRIC_API_PROJECT_ID, "dependency_type": "required"}],
                 "game_versions": game_versions(props),
                 "version_type": version_type(version),
