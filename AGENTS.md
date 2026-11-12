@@ -51,9 +51,9 @@ Do not drift away from them without updating them.
 - `scripts/release.py` - release from the owner's PC (GitHub + Modrinth + CurseForge project 1799445, one jar per Minecraft version; tokens in `~/.env`)
 - `scripts/dev/playtest.py` — invisible in-game checks on Windows (clients, local server, second "pirate" client)
 - `scripts/yarn2moj.py` — Yarn -> Mojang name lookup for backports to old versions
-- `docs/` — protocol, roadmap, porting notes
+- `docs/` - authlib roadmap and notes, porting notes
 
-`relay/` is no longer part of the supported architecture. Do not rebuild it as a parallel direction.
+The mod talks to Ely.by directly. Do not bring back a login relay or any custom server in between.
 
 ## Product Guardrails
 
@@ -70,7 +70,6 @@ Do not drift away from them without updating them.
 
 - Early Mixins into `com.mojang.authlib.*`
 - Early Mixins into client-side Minecraft auth/session wrappers
-- Embedded auth-host compatibility bridges
 - Ely session persistence and boot-time application
 
 ### Disallowed direction
@@ -99,22 +98,20 @@ Ely.by, the HorniMine Velocity plugin) and must not grow a dependency on any cus
 
 - The Ely auth screen must be understandable to a normal player, not only to the author.
 - Prefer one clear primary action over multiple equal-looking buttons.
-- If a host is discovered but not trusted, the UI must explain that clearly and block login until trust is explicit.
 - Success state should show:
   - that the player is authorized
   - 3D skin preview
   - nickname
   - UUID
-  - active host / session status
+  - session status
 
 ## Testing Rules
 
 Use TDD for:
 
-- protocol and compatibility bridges
-- endpoint mapping
-- trust/discovery logic
-- config parsing
+- parsing Ely.by responses and endpoint mapping
+- skin source decisions (whose skin comes from where)
+- config parsing (the mod has no config today; this applies once one comes back)
 - session and identity behavior
 - research helpers that decide patch targets
 
@@ -163,11 +160,11 @@ invisible and silent, and stop every java process and Gradle daemon you started.
 
 Update docs when any of the following change:
 
-- protocol version or endpoint shape
+- the Ely.by endpoints the mod talks to
 - authlib replacement strategy
-- trust/discovery UX
 - session application model
-- server setup or self-host flow
+- what servers need to let mod users in (README, "For server owners")
+- supported Minecraft versions (README, `docs/porting.md`)
 - product claims in README
 
 ## Anti-Patterns
@@ -177,7 +174,6 @@ Do not introduce:
 - duplicated auth compatibility logic across modules
 - “manager” singletons that own UI + transport + storage + state
 - undocumented runtime hacks
-- hidden trust of discovered hosts
 - broad claims unsupported by logs or tests
 - product wording that quietly upgrades a PoC into a “solved problem”
 
