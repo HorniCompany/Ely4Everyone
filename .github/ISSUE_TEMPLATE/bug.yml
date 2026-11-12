@@ -1,0 +1,87 @@
+name: 🐛 Баг / Bug
+description: Что-то сломалось или работает не так / Something is broken or works wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо, что сообщаешь о проблеме! Можно писать по-русски или по-английски.
+        Thanks for the report! Russian or English, both are fine.
+
+        **Не вставляй токены и пароли.** В логах мода их нет, но проверь, если копируешь что-то ещё.
+        **Don't paste tokens or passwords.** The mod's log lines contain none, but check anything else you paste.
+  - type: textarea
+    id: what
+    attributes:
+      label: Что случилось? / What happened?
+      description: Что ты ожидал и что получилось на самом деле. / What you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как повторить / Steps to reproduce
+      placeholder: |
+        1. Открыл экран Ely.by / Opened the Ely.by screen
+        2. Нажал «Войти» / Pressed "Log in"
+        3. ...
+    validations:
+      required: false
+  - type: dropdown
+    id: minecraft
+    attributes:
+      label: Версия Minecraft / Minecraft version
+      options:
+        - "26.3"
+        - "26.2"
+        - "26.1.2"
+        - "1.21.11"
+        - Другая / Other
+    validations:
+      required: true
+  - type: input
+    id: mod-version
+    attributes:
+      label: Версия мода / Mod version
+      description: Из имени jar-файла или списка модов. / From the jar name or the mod list.
+      placeholder: 0.3.0-alpha
+    validations:
+      required: true
+  - type: dropdown
+    id: launcher
+    attributes:
+      label: Лаунчер / Launcher
+      options:
+        - Prism Launcher
+        - Modrinth App
+        - CurseForge
+        - Официальный / Official
+        - TLauncher
+        - Legacy Launcher
+        - Другой / Other
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Где это было? / Where did it happen?
+      multiple: true
+      options:
+        - Главное меню / Title screen
+        - Экран Ely.by / Ely.by screen
+        - Одиночная игра / Singleplayer
+        - Сервер / Server
+        - Запуск игры / Game start
+  - type: textarea
+    id: log
+    attributes:
+      label: Лог / Log
+      description: |
+        `logs/latest.log` из папки игры, а если игра вылетела, то файл из `crash-reports`.
+        `logs/latest.log` from the game folder, or the file from `crash-reports` after a crash.
+      render: text
+  - type: textarea
+    id: mods
+    attributes:
+      label: Другие моды / Other mods
+      description: Если их немного, перечисли; если сборка, дай ссылку. / List them, or link the modpack.

@@ -1,0 +1,31 @@
+name: ✨ Идея / Idea
+description: Предложить фичу или улучшение / Suggest a feature or an improvement
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Можно писать по-русски или по-английски. / Russian or English, both are fine.
+  - type: textarea
+    id: idea
+    attributes:
+      label: Идея / Idea
+      description: Что хочется и зачем, своими словами. / What you want and why, in your own words.
+    validations:
+      required: true
+  - type: textarea
+    id: now
+    attributes:
+      label: Как сейчас / How it works now
+      description: Чем неудобно сейчас, если это улучшение. / What is inconvenient today, for an improvement.
+  - type: dropdown
+    id: minecraft
+    attributes:
+      label: На какой версии играешь? / Which version do you play?
+      multiple: true
+      options:
+        - "26.3"
+        - "26.2"
+        - "26.1.2"
+        - "1.21.11"
+        - Другая / Other
