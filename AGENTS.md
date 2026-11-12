@@ -41,15 +41,15 @@ Do not drift away from them without updating them.
 
 ## Repository Map
 
-- `mod/` — main Fabric client product. One source tree (`mod/src`) built for every supported
+- `mod/` - main Fabric client product. One source tree (`mod/src`) built for every supported
   Minecraft version with Stonecutter: `mod/versions/<minecraft>/` (1.21.11, 26.1.2, 26.2, 26.3).
   See `docs/porting.md`.
 - The Velocity/Paper plugins and `shared-auth` moved out on 2026-11-10 into their own repository
   (HorniMine, kept privately). This repository is the client mod only; `mod/.../net/` holds the
   small JSON/HTTP helpers the mod took from `shared-auth`.
 - `scripts/release.py` - release from the owner's PC (GitHub + Modrinth + CurseForge project 1799445, one jar per Minecraft version; tokens in `~/.env`)
-- `scripts/dev/playtest.py` — invisible in-game checks on Windows (clients, local server, second "pirate" client)
-- `scripts/yarn2moj.py` — Yarn -> Mojang name lookup for backports to old versions
+- `scripts/dev/playtest.py` - invisible in-game checks on Windows (clients, local server, second "pirate" client)
+- `scripts/yarn2moj.py` - Yarn -> Mojang name lookup for backports to old versions
 - `docs/` - architecture, porting notes, research reports (`research-*.md`, the owner's)
 
 The mod talks to Ely.by directly. Do not bring back a login relay or any custom server in between.
@@ -134,10 +134,10 @@ Before saying work is complete:
 
 Default commands (Gradle runs on Java 25 and downloads the JDKs itself):
 
-- `./gradlew build` — every mod version, all tests
-- `./gradlew :mod:1.21.11:build` (or `:mod:26.3:build`, ...) — one Minecraft version
-- `./gradlew :mod:1.21.11:runClient` — the game; 1.21.x runs in `mod/run`, newer versions in `mod/run-<version>`
-- `./gradlew :mod:<minecraft>:runClientGameTest` — the in-game test scenario (`mod/src/gametest`); CI runs it for
+- `./gradlew build` - every mod version, all tests
+- `./gradlew :mod:1.21.11:build` (or `:mod:26.3:build`, ...) - one Minecraft version
+- `./gradlew :mod:1.21.11:runClient` - the game; 1.21.x runs in `mod/run`, newer versions in `mod/run-<version>`
+- `./gradlew :mod:<minecraft>:runClientGameTest` - the in-game test scenario (`mod/src/gametest`); CI runs it for
   every version and keeps screenshots as artifacts. Keep it green when changing UI, skins or mixins.
 
 Mixin targets are strings the compiler does not check: when a Minecraft or authlib version changes,
