@@ -31,10 +31,9 @@ If a proposed change smells like “runtime magic inside an already running JVM�
 
 ## Source Of Truth
 
-When work touches the authlib-replacement idea, these documents are the guardrails:
+These documents are the guardrails:
 
-- `docs/authlib-replacement-roadmap.md`
-- `docs/authlib-replacement-notes.md`
+- `docs/architecture.md` - how the mod works today: login, session storage, identity mixins, skins
 - `docs/porting.md` - how the mod is built for several Minecraft versions and how to add one
 - `README.md` / `README.en.md`
 
@@ -51,7 +50,7 @@ Do not drift away from them without updating them.
 - `scripts/release.py` - release from the owner's PC (GitHub + Modrinth + CurseForge project 1799445, one jar per Minecraft version; tokens in `~/.env`)
 - `scripts/dev/playtest.py` — invisible in-game checks on Windows (clients, local server, second "pirate" client)
 - `scripts/yarn2moj.py` — Yarn -> Mojang name lookup for backports to old versions
-- `docs/` - authlib roadmap and notes, porting notes
+- `docs/` - architecture, porting notes, research reports (`research-*.md`, the owner's)
 
 The mod talks to Ely.by directly. Do not bring back a login relay or any custom server in between.
 
@@ -84,9 +83,13 @@ If a task depends on any of the disallowed directions, stop and say so directly.
 ## Session And Identity Rules
 
 - In-game Ely login UI is acceptable.
-- Local Ely session persistence is acceptable.
-- Boot-time application of Ely session is the ONLY product-safe path.
-- In-memory hot-swap of a running client session is a fundamentally flawed strategy due to aggressive vanilla caching and must be abandoned.
+- Local Ely session persistence is acceptable, outside the instance folder (`docs/architecture.md`).
+- Never replace the vanilla `User` object by reflection. The mod answers `Minecraft.getUser` and
+  friends from its own state through mixins, applied at boot and after login, logout and refresh.
+- Vanilla caches built with the old identity (Realms, telemetry, loaded skins) are not chased: if a
+  feature needs a clean identity everywhere, ask the player to restart.
+- Identity changes belong on the client thread (open: some refresh paths still apply it from a
+  background thread, `tasks.md` 3.1).
 
 ## Server Rules
 
