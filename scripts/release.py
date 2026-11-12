@@ -17,9 +17,10 @@ Steps, each skipped when already done:
 4. Modrinth page: the description is README.en.md with absolute links (see modrinth_body), updated
    when it differs.
 5. CurseForge: one file per Minecraft version, the same jars from the GitHub release, tagged with
-   the Minecraft version, Fabric, Client and the node's Java. A jar whose file name is already in
-   the project's public file list is skipped. The CurseForge page description is edited by hand
-   (Markdown mode), it is not synced from here.
+   the Minecraft version, Fabric, Client and the node's Java. A jar is skipped when its file name
+   is in the project's public file list or in the local upload log (~/.cache/ely4everyone/
+   curseforge-uploads.json): files waiting for moderation are not public yet. The CurseForge page
+   description is edited by hand (Markdown mode), it is not synced from here.
 
 Release notes live in changelog/<version>.md: the first line `# Title` is the release title,
 the rest is the body used on GitHub; Modrinth and CurseForge get the English part.
@@ -52,6 +53,8 @@ MODRINTH_API = "https://api.modrinth.com/v2"
 CURSEFORGE_PROJECT_ID = 1799445
 CURSEFORGE_UPLOAD_API = "https://minecraft.curseforge.com/api"
 CURSEFORGE_SITE_API = "https://www.curseforge.com/api/v1"  # public, no key: the project's file list
+# Uploads still in moderation are missing from the public list; this log keeps reruns from duplicating them.
+CURSEFORGE_LOG = Path.home() / ".cache" / "ely4everyone" / "curseforge-uploads.json"
 USER_AGENT = "HorniCompany/Ely4Everyone release script (github.com/HorniCompany/Ely4Everyone)"
 
 
@@ -181,6 +184,18 @@ def curseforge_file_names() -> set[str]:
         if len(files) < 50:
             return names
         index += 1
+
+
+def read_curseforge_log() -> dict[str, int]:
+    try:
+        return json.loads(CURSEFORGE_LOG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def write_curseforge_log(log: dict[str, int]) -> None:
+    CURSEFORGE_LOG.parent.mkdir(parents=True, exist_ok=True)
+    CURSEFORGE_LOG.write_text(json.dumps(log, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def curseforge_game_version_ids(token: str, props: dict[str, str], catalogue: tuple[list, dict]) -> list[int]:
@@ -331,7 +346,8 @@ def main() -> None:
         print("Modrinth: description updated from README.en.md")
 
     # 5. CurseForge: the same jars from the GitHub release, one file per Minecraft version.
-    uploaded = curseforge_file_names()
+    log = read_curseforge_log()
+    uploaded = curseforge_file_names() | set(log)
     to_upload = {node: jar for node, jar in mod_jars.items() if jar not in uploaded}
     for node, jar in mod_jars.items():
         if node not in to_upload:
@@ -360,6 +376,8 @@ def main() -> None:
                                                data_field="metadata")
                 created = curseforge("POST", f"{CURSEFORGE_UPLOAD_API}/projects/{CURSEFORGE_PROJECT_ID}/upload-file",
                                      cf_token, body, content_type)
+                log[jar_name] = created["id"]
+                write_curseforge_log(log)
                 print(f"CurseForge: uploaded {jar_name} (file id {created['id']})")
 
 
