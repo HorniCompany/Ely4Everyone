@@ -46,3 +46,6 @@ local.properties
 # Local agent workflows (machine-specific paths and hosts)
 .agents/
 __pycache__/
+
+# Working backlog, kept local
+tasks.md
