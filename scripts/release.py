@@ -1,4 +1,4 @@
-"""Release from your own PC: GitHub release + Modrinth, no hosted CI needed.
+"""Release from your own PC: GitHub release + Modrinth + CurseForge, no hosted CI needed.
 
     python scripts/release.py              # build, then publish whatever is missing
     python scripts/release.py --dry-run    # show what would happen, publish nothing
@@ -16,12 +16,17 @@ Steps, each skipped when already done:
    **downloaded from the GitHub release**, so both places ship byte-identical files.
 4. Modrinth page: the description is README.en.md with absolute links (see modrinth_body), updated
    when it differs.
+5. CurseForge: one file per Minecraft version, the same jars from the GitHub release, tagged with
+   the Minecraft version, Fabric, Client and the node's Java. A jar whose file name is already in
+   the project's public file list is skipped. The CurseForge page description is edited by hand
+   (Markdown mode), it is not synced from here.
 
 Release notes live in changelog/<version>.md: the first line `# Title` is the release title,
-the rest is the body used on GitHub and Modrinth.
+the rest is the body used on GitHub; Modrinth and CurseForge get the English part.
 
-The Modrinth token comes from the PAT_MODRINTH environment variable or, if unset, from a
-PAT_MODRINTH= line in ~/.env (override with --env-file). It is never printed.
+Tokens come from the environment or, if unset, from a NAME= line in ~/.env (override with
+--env-file): PAT_MODRINTH for Modrinth, CURSEFORGE_TOKEN (curseforge.com/account/api-tokens) for
+CurseForge. They are never printed.
 Needs: git, gh (logged in). Gradle fetches the JDKs it needs (21 and 25) by itself.
 """
 
@@ -44,6 +49,9 @@ REPO = "HorniCompany/Ely4Everyone"
 MODRINTH_PROJECT = "ely4everyone"
 FABRIC_API_PROJECT_ID = "P7dR8mSH"
 MODRINTH_API = "https://api.modrinth.com/v2"
+CURSEFORGE_PROJECT_ID = 1799445
+CURSEFORGE_UPLOAD_API = "https://minecraft.curseforge.com/api"
+CURSEFORGE_SITE_API = "https://www.curseforge.com/api/v1"  # public, no key: the project's file list
 USER_AGENT = "HorniCompany/Ely4Everyone release script (github.com/HorniCompany/Ely4Everyone)"
 
 
@@ -120,14 +128,14 @@ def read_changelog(version: str) -> tuple[str, str, str, str]:
     return title, notes, english_title, english_notes
 
 
-def modrinth_token(env_file: Path) -> str:
-    token = os.environ.get("PAT_MODRINTH", "").strip()
+def env_token(name: str, env_file: Path) -> str:
+    token = os.environ.get(name, "").strip()
     if not token and env_file.exists():
         for line in env_file.read_text(encoding="utf-8").splitlines():
-            if line.startswith("PAT_MODRINTH="):
+            if line.startswith(f"{name}="):
                 token = line.split("=", 1)[1].strip().strip('"').strip("'")
     if not token:
-        sys.exit(f"no PAT_MODRINTH in the environment or in {env_file}")
+        sys.exit(f"no {name} in the environment or in {env_file}")
     return token
 
 
@@ -146,10 +154,57 @@ def modrinth(method: str, path: str, token: str | None = None, body: bytes | Non
         sys.exit(f"Modrinth {method} {path}: HTTP {error.code} {error.read().decode(errors='replace')[:500]}")
 
 
-def multipart(data: dict, file_name: str, file_bytes: bytes) -> tuple[bytes, str]:
+def curseforge(method: str, url: str, token: str | None = None, body: bytes | None = None,
+               content_type: str | None = None):
+    headers = {"User-Agent": USER_AGENT}
+    if token:
+        headers["X-Api-Token"] = token
+    if content_type:
+        headers["Content-Type"] = content_type
+    request = urllib.request.Request(url, data=body, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return json.loads(response.read() or b"null")
+    except urllib.error.HTTPError as error:
+        sys.exit(f"CurseForge {method} {url}: HTTP {error.code} {error.read().decode(errors='replace')[:500]}")
+
+
+def curseforge_file_names() -> set[str]:
+    """File names in the project's public file list (the site's own API, no key needed)."""
+    names: set[str] = set()
+    index = 0
+    while True:
+        page = curseforge("GET", f"{CURSEFORGE_SITE_API}/mods/{CURSEFORGE_PROJECT_ID}/files"
+                                 f"?pageIndex={index}&pageSize=50&sort=dateCreated&sortDescending=true")
+        files = page.get("data") or []
+        names.update(f["fileName"] for f in files)
+        if len(files) < 50:
+            return names
+        index += 1
+
+
+def curseforge_game_version_ids(token: str, props: dict[str, str], catalogue: tuple[list, dict]) -> list[int]:
+    """CurseForge tag ids for one node: its Minecraft versions, Fabric, Client and its Java."""
+    versions, type_slugs = catalogue
+
+    def find(name: str, slug_ok) -> int:
+        for v in versions:
+            if v["name"] == name and slug_ok(type_slugs.get(v["gameVersionTypeID"], "")):
+                return v["id"]
+        sys.exit(f"CurseForge has no game version tag '{name}' yet")
+
+    minecraft = lambda slug: slug.startswith("minecraft-") and "snapshot" not in slug
+    ids = [find(mc, minecraft) for mc in game_versions(props)]
+    ids.append(find("Fabric", lambda slug: slug == "modloader"))
+    ids.append(find("Client", lambda slug: slug == "environment"))
+    ids.append(find(f"Java {props.get('javaVersion', '21')}", lambda slug: slug == "java"))
+    return ids
+
+
+def multipart(data: dict, file_name: str, file_bytes: bytes, data_field: str = "data") -> tuple[bytes, str]:
     boundary = uuid.uuid4().hex
     parts = [
-        f'--{boundary}\r\nContent-Disposition: form-data; name="data"\r\n'
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{data_field}"\r\n'
         f"Content-Type: application/json\r\n\r\n{json.dumps(data, ensure_ascii=False)}\r\n".encode(),
         f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{file_name}"\r\n'
         f"Content-Type: application/java-archive\r\n\r\n".encode() + file_bytes + b"\r\n",
@@ -258,7 +313,7 @@ def main() -> None:
                 shown = {k: v for k, v in data.items() if k != "changelog"}
                 print(f"Modrinth: would upload {jar_name} from the GitHub release with {json.dumps(shown, ensure_ascii=False)}")
                 continue
-            token = token or modrinth_token(args.env_file)
+            token = token or env_token("PAT_MODRINTH", args.env_file)
             run("gh", "release", "download", tag, "-R", REPO, "--pattern", jar_name, "--dir", download_dir)
             body, content_type = multipart(data, jar_name, (Path(download_dir) / jar_name).read_bytes())
             created = modrinth("POST", "/version", token, body, content_type)
@@ -271,9 +326,41 @@ def main() -> None:
     elif args.dry_run:
         print("Modrinth: would update the description from README.en.md")
     else:
-        token = token or modrinth_token(args.env_file)
+        token = token or env_token("PAT_MODRINTH", args.env_file)
         modrinth("PATCH", f"/project/{project['id']}", token, json.dumps({"body": body}).encode(), "application/json")
         print("Modrinth: description updated from README.en.md")
+
+    # 5. CurseForge: the same jars from the GitHub release, one file per Minecraft version.
+    uploaded = curseforge_file_names()
+    to_upload = {node: jar for node, jar in mod_jars.items() if jar not in uploaded}
+    for node, jar in mod_jars.items():
+        if node not in to_upload:
+            print(f"CurseForge: {jar} already exists, skipping")
+    if to_upload:
+        cf_token = env_token("CURSEFORGE_TOKEN", args.env_file)
+        type_slugs = {t["id"]: t["slug"] for t in curseforge("GET", f"{CURSEFORGE_UPLOAD_API}/game/version-types", cf_token)}
+        catalogue = (curseforge("GET", f"{CURSEFORGE_UPLOAD_API}/game/versions", cf_token), type_slugs)
+        with tempfile.TemporaryDirectory() as download_dir:
+            for node, jar_name in to_upload.items():
+                props = nodes[node]
+                metadata = {
+                    "displayName": f"{version} for {props['minecraftVersion']}",
+                    "changelog": f"## {english_title}\n\n{english_notes}",
+                    "changelogType": "markdown",
+                    "gameVersions": curseforge_game_version_ids(cf_token, props, catalogue),
+                    "releaseType": version_type(version),
+                    "relations": {"projects": [{"slug": "fabric-api", "type": "requiredDependency"}]},
+                }
+                if args.dry_run:
+                    shown = {k: v for k, v in metadata.items() if k != "changelog"}
+                    print(f"CurseForge: would upload {jar_name} from the GitHub release with {json.dumps(shown)}")
+                    continue
+                run("gh", "release", "download", tag, "-R", REPO, "--pattern", jar_name, "--dir", download_dir)
+                body, content_type = multipart(metadata, jar_name, (Path(download_dir) / jar_name).read_bytes(),
+                                               data_field="metadata")
+                created = curseforge("POST", f"{CURSEFORGE_UPLOAD_API}/projects/{CURSEFORGE_PROJECT_ID}/upload-file",
+                                     cf_token, body, content_type)
+                print(f"CurseForge: uploaded {jar_name} (file id {created['id']})")
 
 
 if __name__ == "__main__":

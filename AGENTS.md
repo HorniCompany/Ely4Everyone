@@ -48,7 +48,7 @@ Do not drift away from them without updating them.
 - The Velocity/Paper plugins and `shared-auth` moved out on 2026-11-10 into their own repository
   (HorniMine, kept privately). This repository is the client mod only; `mod/.../net/` holds the
   small JSON/HTTP helpers the mod took from `shared-auth`.
-- `scripts/release.py` — release from the owner's PC (GitHub + Modrinth, one jar per Minecraft version)
+- `scripts/release.py` - release from the owner's PC (GitHub + Modrinth + CurseForge project 1799445, one jar per Minecraft version; tokens in `~/.env`)
 - `scripts/dev/playtest.py` — invisible in-game checks on Windows (clients, local server, second "pirate" client)
 - `scripts/yarn2moj.py` — Yarn -> Mojang name lookup for backports to old versions
 - `docs/` — protocol, roadmap, porting notes
